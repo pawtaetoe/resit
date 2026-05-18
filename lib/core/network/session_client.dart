@@ -1,9 +1,10 @@
 import 'package:http/http.dart' as http;
 
 class SessionClient extends http.BaseClient {
-  final http.Client _inner = http.Client();
-  // Outer map key is the domain (host), inner map is cookie key-value pairs.
-  final Map<String, Map<String, String>> _cookies = {};
+  final http.Client _inner;
+  final List<_Cookie> _cookies = [];
+
+  SessionClient([http.Client? inner]) : _inner = inner ?? http.Client();
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -12,24 +13,19 @@ class SessionClient extends http.BaseClient {
 
     while (true) {
       currentRequest.followRedirects = false;
-      
-      final host = currentRequest.url.host;
-      if (_cookies.containsKey(host) && _cookies[host]!.isNotEmpty) {
-        final cookieString = _cookies[host]!.entries.map((e) => '${e.key}=${e.value}').join('; ');
-        currentRequest.headers['cookie'] = cookieString;
-      }
+      _attachCookies(currentRequest);
       currentRequest.headers['user-agent'] =
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 
       final response = await _inner.send(currentRequest);
-      _updateCookies(response.headers, host);
+      _updateCookies(response.headers, currentRequest.url.host);
 
       final isRedirect = response.statusCode == 301 ||
-                         response.statusCode == 302 ||
-                         response.statusCode == 303 ||
-                         response.statusCode == 307 ||
-                         response.statusCode == 308;
-                         
+          response.statusCode == 302 ||
+          response.statusCode == 303 ||
+          response.statusCode == 307 ||
+          response.statusCode == 308;
+
       if (isRedirect && response.headers.containsKey('location')) {
         redirectCount++;
         if (redirectCount > 10) throw Exception("Too many redirects");
@@ -37,14 +33,14 @@ class SessionClient extends http.BaseClient {
         final location = response.headers['location']!;
         final newUri = currentRequest.url.resolve(location);
 
-        await response.stream.drain(); // Drain body of redirect response
+        await response.stream.drain();
 
-        // For 301, 302, 303, change POST to GET to mimic Python 'requests' behavior
         String newMethod = currentRequest.method;
-        if (response.statusCode == 301 || response.statusCode == 302 || response.statusCode == 303) {
-          if (currentRequest.method == 'POST') {
-            newMethod = 'GET';
-          }
+        if ((response.statusCode == 301 ||
+                response.statusCode == 302 ||
+                response.statusCode == 303) &&
+            currentRequest.method == 'POST') {
+          newMethod = 'GET';
         }
 
         currentRequest = http.Request(newMethod, newUri);
@@ -54,24 +50,58 @@ class SessionClient extends http.BaseClient {
     }
   }
 
+  void _attachCookies(http.BaseRequest request) {
+    final host = request.url.host;
+    final path = request.url.path.isEmpty ? '/' : request.url.path;
+    final validCookies = _cookies.where((cookie) => cookie.matches(host, path));
+
+    if (validCookies.isNotEmpty) {
+      request.headers['cookie'] = validCookies
+          .map((cookie) => '${cookie.name}=${cookie.value}')
+          .join('; ');
+    }
+  }
+
   void _updateCookies(Map<String, String> headers, String host) {
     final rawCookie = headers['set-cookie'];
-    if (rawCookie != null) {
-      _cookies.putIfAbsent(host, () => {});
-      final parts = rawCookie.split(RegExp(r',\s*(?=[a-zA-Z0-9_.-]+=)'));
-      for (var part in parts) {
-        final cookieKV = part.split(';').first;
-        final eqIdx = cookieKV.indexOf('=');
-        if (eqIdx != -1) {
-          final key = cookieKV.substring(0, eqIdx).trim();
-          final val = cookieKV.substring(eqIdx + 1).trim();
-          if (val.isEmpty || val.toLowerCase() == 'deleted') {
-            _cookies[host]!.remove(key);
-          } else {
-            _cookies[host]![key] = val;
-          }
+    if (rawCookie == null) return;
+
+    final parts = rawCookie.split(RegExp(r',\s*(?=[^=;\s]+\=)'));
+    for (var part in parts) {
+      final segments = part.split(';').map((segment) => segment.trim()).toList();
+      if (segments.isEmpty) continue;
+
+      final cookieKv = segments.first;
+      final eqIdx = cookieKv.indexOf('=');
+      if (eqIdx == -1) continue;
+
+      final name = cookieKv.substring(0, eqIdx).trim();
+      final value = cookieKv.substring(eqIdx + 1).trim();
+      if (value.isEmpty || value.toLowerCase() == 'deleted') {
+        _cookies.removeWhere((cookie) => cookie.name == name && cookie.domain == host);
+        continue;
+      }
+
+      var domain = host;
+      var path = '/';
+      for (var i = 1; i < segments.length; i++) {
+        final attr = segments[i];
+        final attrEq = attr.indexOf('=');
+        final attrName = attrEq == -1
+            ? attr.toLowerCase()
+            : attr.substring(0, attrEq).trim().toLowerCase();
+        final attrValue = attrEq == -1 ? '' : attr.substring(attrEq + 1).trim();
+
+        if (attrName == 'domain' && attrValue.isNotEmpty) {
+          domain = attrValue;
+        } else if (attrName == 'path' && attrValue.isNotEmpty) {
+          path = attrValue;
         }
       }
+
+      _cookies.removeWhere((cookie) =>
+          cookie.name == name && cookie.domain == domain && cookie.path == path);
+      _cookies.add(_Cookie(name, value, domain, path));
     }
   }
 
@@ -80,9 +110,31 @@ class SessionClient extends http.BaseClient {
   }
 
   bool hasAuthCookie() {
-    for (var domainCookies in _cookies.values) {
-      if (domainCookies.containsKey('.AspNet.Cookies')) return true;
-    }
-    return false;
+    return _cookies.any((cookie) =>
+        cookie.name == '.AspNet.Cookies' || cookie.name == 'AspNet.Cookies');
+  }
+}
+
+class _Cookie {
+  final String name;
+  final String value;
+  final String domain;
+  final String path;
+
+  _Cookie(this.name, this.value, this.domain, this.path);
+
+  bool matches(String host, String requestPath) {
+    final normalizedHost = host.toLowerCase();
+    final normalizedDomain = domain.toLowerCase();
+
+    final hostMatches = normalizedDomain.startsWith('.')
+        ? normalizedHost == normalizedDomain.substring(1) ||
+            normalizedHost.endsWith(normalizedDomain)
+        : normalizedHost == normalizedDomain;
+
+    if (!hostMatches) return false;
+
+    final normalizedRequestPath = requestPath.isEmpty ? '/' : requestPath;
+    return normalizedRequestPath.startsWith(path);
   }
 }

@@ -6,7 +6,7 @@ class AuthService {
 
   AuthService(this.client);
 
-  static const String base = "https://in4sit.singaporetech.edu.sg/";
+  static const String base = "https://rbs.singaporetech.edu.sg";
   static const String callback = "$base/Account/LoginCallbak";
   static const String protected = "$base/SRB001/SRB001Page";
 
@@ -84,31 +84,34 @@ class AuthService {
   Future<String?> getCsrfToken() async {
     if (_cachedCsrfToken != null) return _cachedCsrfToken;
 
-    try {
-      print('Fetching CSRF token from $protected...');
-      var response = await client.get(Uri.parse(protected));
-      print('CSRF fetch status: ${response.statusCode}, URL: ${response.request?.url}');
-      
-      if (response.statusCode != 200) {
-        print('Error: Failed to fetch protected page for CSRF.');
-        return null;
-      }
+    final response = await client.get(Uri.parse(protected));
+    print('CSRF fetch status: ${response.statusCode}, URL: ${response.request?.url}');
 
-      final regex = RegExp(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"');
-      final match = regex.firstMatch(response.body);
-      
-      if (match != null && match.groupCount >= 1) {
-        _cachedCsrfToken = match.group(1);
-        return _cachedCsrfToken;
-      }
-      
-      print('CRITICAL: Could not find CSRF token in the HTML! First 500 chars of body:');
-      print(response.body.substring(0, response.body.length < 500 ? response.body.length : 500));
-      return null;
-    } catch (e) {
-      print('CSRF error: $e');
+    if (response.statusCode >= 400) {
+      print('Error: Failed to fetch protected page for CSRF.');
       return null;
     }
+
+    final doc = parser.parse(response.body);
+    final input = doc.querySelector('input[name="__RequestVerificationToken"]');
+    final token = input?.attributes['value'];
+
+    if (token == null || token.isEmpty) {
+      // Also try a meta tag (some apps expose it that way)
+      final meta = doc.querySelector('meta[name="csrf-token"], meta[name="__RequestVerificationToken"]');
+      final metaToken = meta?.attributes['content'];
+      if (metaToken != null && metaToken.isNotEmpty) {
+        _cachedCsrfToken = metaToken;
+        return metaToken;
+      }
+
+      print('CRITICAL: No CSRF token in HTML. First 800 chars:');
+      print(response.body.substring(0, response.body.length.clamp(0, 800)));
+      return null;
+    }
+
+    _cachedCsrfToken = token;
+    return token;
   }
 }
 
