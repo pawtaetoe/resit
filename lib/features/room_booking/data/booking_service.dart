@@ -239,4 +239,95 @@ class BookingService {
       throw Exception("Booking failed: $payload");
     }
   }
+
+  Future<List<Booking>> getBookings({String bookingStatus = 'current'}) async {
+    final csrfToken = await auth.getCsrfToken();
+    if (csrfToken == null) throw Exception("Could not get CSRF token.");
+
+    final data = {
+      "__RequestVerificationToken": csrfToken,
+      "bookingStatus": bookingStatus,
+      "resourceCategoryID": "1",
+      "resourceName": "",
+    };
+
+    final response = await client.post(
+      Uri.parse("$base/DHB001/GetDashBoardDataByStatus"),
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": "$base/DHB001/DHB001Page",
+        "origin": base,
+      },
+      body: data,
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception("Failed to get bookings: ${response.statusCode}");
+    }
+
+    final jsonMap = jsonDecode(response.body);
+    final List<dynamic> rawList = jsonMap['data'] ?? [];
+    return rawList.map((e) => Booking.fromList(List<dynamic>.from(e))).toList();
+  }
+
+  Future<void> cancelBooking(String cancelId) async {
+    final csrfToken = await auth.getCsrfToken();
+    if (csrfToken == null) throw Exception("Could not get CSRF token.");
+
+    final data = {
+      "__RequestVerificationToken": csrfToken,
+      "bookingNo": cancelId,
+      "BookingNo": cancelId,
+      "bookingID": cancelId,
+      "BookingID": cancelId,
+      "id": cancelId,
+    };
+
+    final endpoints = [
+      "$base/DHB001/CancelNormalBooking",
+      "$base/DHB001/CancelBooking",
+      "$base/DHB001/BookingCancellation",
+      "$base/SRB001/CancelBooking",
+    ];
+
+    dynamic lastException;
+    for (final url in endpoints) {
+      try {
+        final response = await client.post(
+          Uri.parse(url),
+          headers: {
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "x-requested-with": "XMLHttpRequest",
+            "referer": "$base/DHB001/DHB001Page",
+            "origin": base,
+          },
+          body: data,
+        );
+
+        if (response.statusCode == 404) {
+          continue;
+        }
+
+        if (response.statusCode != 200) {
+          throw Exception("Server returned status ${response.statusCode}");
+        }
+
+        final payload = jsonDecode(response.body);
+        final isSuccess = payload['result'] == 'success' || 
+                          payload['status'] == 'success' || 
+                          payload['success'] == true;
+        if (!isSuccess) {
+          throw Exception(payload['message'] ?? payload['error'] ?? response.body);
+        }
+        return;
+      } catch (e) {
+        lastException = e;
+      }
+    }
+
+    throw Exception("Cancellation failed: ${lastException ?? 'All endpoints failed'}");
+  }
 }
