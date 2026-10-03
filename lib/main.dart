@@ -1,12 +1,27 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:resit/core/network/session_client.dart';
+import 'package:resit/core/providers.dart';
 import 'package:resit/features/services/presentation/services_screen.dart';
 import 'package:resit/features/settings/presentation/settings_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SessionClient.debugCookies = kDebugMode;
+  final container = ProviderContainer();
+
+  // Restore the saved ADFS/RBS session in the background so the user does not
+  // have to redo MFA on every launch.
+  container.read(authServiceProvider).resumeSession().catchError((Object e) {
+    debugPrint('Session restore failed: $e');
+    return false;
+  });
+
   runApp(
-    const ProviderScope(
-      child: ReSitApp(),
+    UncontrolledProviderScope(
+      container: container,
+      child: const ReSitApp(),
     ),
   );
 }

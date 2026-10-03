@@ -1,25 +1,113 @@
+import 'dart:async';
+
+import 'package:html/dom.dart' as dom;
+import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as parser;
 import 'package:resit/core/network/session_client.dart';
+import 'package:resit/core/storage/secure_storage.dart';
+
+/// What the user has to do on their phone to finish an MFA sign-in.
+class MfaChallenge {
+  /// The number to tap/enter in Microsoft Authenticator (number matching),
+  /// when the ADFS page shows one.
+  final String? number;
+  final String message;
+
+  const MfaChallenge({this.number, required this.message});
+}
+
+/// The saved session is gone and getting a new one needs credentials + MFA.
+class SessionExpiredException implements Exception {
+  /// What the sign-in page looked like, to help work out why SSO failed.
+  final String? detail;
+
+  SessionExpiredException([this.detail]);
+
+  @override
+  String toString() =>
+      'Session expired. Reconnect from Settings (Microsoft Authenticator approval needed).'
+      '${detail != null ? '\n\n$detail' : ''}';
+}
+
+/// One-line summary of an HTML page for debugging: title, forms with their
+/// field names (no values), and the start of the visible text.
+String describeHtmlPage(String body) {
+  final doc = parser.parse(body);
+  final title = doc.querySelector('title')?.text.trim() ?? '';
+  final forms = doc.querySelectorAll('form').map((f) {
+    final names = f.querySelectorAll('input').map((i) => i.attributes['name']).whereType<String>();
+    return '[${f.attributes['action'] ?? ''} fields=${names.join(",")}]';
+  }).join(' ');
+  final text = (doc.body?.text ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+  return 'title="$title" forms=$forms text="${text.substring(0, text.length.clamp(0, 300))}"';
+}
+
+class MfaException implements Exception {
+  final String message;
+  MfaException(this.message);
+
+  @override
+  String toString() => message;
+}
 
 class AuthService {
   final SessionClient client;
+  final SecureStorage storage;
 
-  AuthService(this.client);
+  AuthService(this.client, this.storage);
 
   static const String base = "https://rbs.singaporetech.edu.sg";
   static const String callback = "$base/Account/LoginCallbak";
   static const String protected = "$base/SRB001/SRB001Page";
 
-  String? _cachedCsrfToken;
+  /// How often the session is pinged while the app is open. Hitting the
+  /// protected page keeps the RBS cookie's sliding expiry alive and renews
+  /// the ADFS SSO session without another MFA prompt.
+  static const Duration keepAliveInterval = Duration(minutes: 10);
 
-  Future<bool> login(String username, String password) async {
+  /// A cached CSRF token is trusted for this long before the session is
+  /// re-validated.
+  static const Duration _tokenTtl = Duration(minutes: 5);
+
+  String? _cachedCsrfToken;
+  DateTime? _lastValidated;
+  bool _restored = false;
+  bool _active = false;
+  Timer? _keepAliveTimer;
+  Future<bool>? _resuming;
+
+  /// Called whenever the session flips between signed-in and signed-out.
+  void Function(bool active)? onSessionChanged;
+
+  bool get isActive => _active;
+
+  // ---------------------------------------------------------------------------
+  // Interactive login (credentials + MFA)
+  // ---------------------------------------------------------------------------
+
+  /// Full ADFS sign-in. If ADFS asks for MFA, [onMfaChallenge] is called so the
+  /// UI can tell the user to approve the request in Microsoft Authenticator,
+  /// and this future stays pending until they do (or [mfaTimeout] passes).
+  Future<bool> login(
+    String username,
+    String password, {
+    void Function(String message)? onLog,
+    void Function(MfaChallenge challenge)? onMfaChallenge,
+    Duration mfaTimeout = const Duration(minutes: 2),
+  }) async {
+    void log(String message) {
+      debugLog(message);
+      onLog?.call(message);
+    }
+
     client.clearCookies();
     _cachedCsrfToken = null;
+    _lastValidated = null;
 
     // 1. GET the protected page. This redirects to ADFS.
-    print('--- ADFS Login Started ---');
+    log('--- ADFS Login Started ---');
     var response = await client.get(Uri.parse(protected));
-    print('Step 1 (GET protected page): Status ${response.statusCode}');
+    log('Step 1 (GET protected page): Status ${response.statusCode}');
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch protected page.');
     }
@@ -28,90 +116,522 @@ class AuthService {
     var adfsUrl = response.request?.url;
     if (adfsUrl == null) throw Exception('No redirect to ADFS login page.');
 
-    // 2. POST credentials to ADFS
+    // 2. POST credentials to ADFS. Kmsi asks ADFS for its persistent
+    // "keep me signed in" SSO cookie, which lets us skip MFA on later logins.
     var loginResponse = await client.post(
       adfsUrl,
       body: {
         "UserName": "$username@sit.singaporetech.edu.sg",
         "Password": password,
         "AuthMethod": "FormAuthentication",
+        "Kmsi": "true",
       },
     );
-    print('Step 2 (POST credentials): Status ${loginResponse.statusCode}');
+    log('Step 2 (POST credentials): Status ${loginResponse.statusCode}');
     if (loginResponse.statusCode != 200) {
       throw Exception('Failed to post credentials to ADFS. Body: ${loginResponse.body.substring(0, 100)}...');
     }
 
-    // 3. Replay the ADFS relay form to the callback
-    var document = parser.parse(loginResponse.body);
-    var hiddenInputs = document.querySelectorAll('input[type="hidden"]');
-    
-    Map<String, String> fields = {};
-    for (var input in hiddenInputs) {
-      var name = input.attributes['name'];
-      var value = input.attributes['value'];
-      if (name != null && value != null) {
-        if (['wa', 'wresult', 'wctx'].contains(name.toLowerCase())) {
-          fields[name] = value;
+    var page = loginResponse.body;
+    var pageUrl = loginResponse.request?.url ?? adfsUrl;
+    var fields = _extractRelayFields(page);
+
+    // 3. MFA: ADFS answers a correct password with a challenge page instead
+    // of the relay form.
+    if (fields == null && _isMfaPage(page)) {
+      log('Step 3 (MFA): ADFS requires multi-factor authentication.');
+      page = (await _completeMfa(
+        pageUrl,
+        page,
+        mfaTimeout: mfaTimeout,
+        log: log,
+        onChallenge: onMfaChallenge,
+      ))
+          .page;
+      fields = _extractRelayFields(page);
+    }
+
+    if (fields == null) {
+      final error = _extractError(parser.parse(page));
+      throw Exception(error ??
+          "No wresult found in ADFS reply. Check your Student ID and Password.");
+    }
+
+    // 4. Replay the ADFS relay form to the callback
+    log('Step 4 (Replay form to callback): POSTing ${fields.keys.join(", ")}');
+    final callbackResponse = await client.post(Uri.parse(callback), body: fields);
+    log('Step 4 Result: Status ${callbackResponse.statusCode}, URL: ${callbackResponse.request?.url}');
+
+    if (callbackResponse.statusCode != 200 && callbackResponse.statusCode != 302) {
+      log('Warning: Unexpected status code from callback: ${callbackResponse.statusCode}');
+    }
+
+    final hasCookie = client.hasAuthCookie();
+    log('Final Check: hasAuthCookie = $hasCookie');
+    if (hasCookie) {
+      _lastValidated = DateTime.now();
+      await _persistSession();
+    }
+    _setActive(hasCookie);
+    return hasCookie;
+  }
+
+  /// Walks the MFA pages until ADFS hands back the relay form. Returns the
+  /// HTML of that final page and the URL it came from.
+  Future<({String page, Uri url})> _completeMfa(
+    Uri startUrl,
+    String startPage, {
+    required Duration mfaTimeout,
+    required void Function(String) log,
+    void Function(MfaChallenge)? onChallenge,
+  }) async {
+    final deadline = DateTime.now().add(mfaTimeout);
+    var url = startUrl;
+    var page = startPage;
+    String? announcedNumber;
+
+    for (var step = 1;; step++) {
+      final doc = parser.parse(page);
+      final form = _pickForm(doc);
+      if (form == null) {
+        throw MfaException('ADFS MFA page has no form to submit.');
+      }
+
+      final action = form.attributes['action'];
+      final target = (action == null || action.isEmpty) ? url : url.resolve(action);
+      final fields = _formFields(form);
+      final number = _extractMfaNumber(doc);
+
+      if (step == 1) log('MFA page: ${_describeMfaPage(doc, fields)}');
+      if (step == 1 || number != announcedNumber) {
+        announcedNumber = number;
+        onChallenge?.call(MfaChallenge(
+          number: number,
+          message: number != null
+              ? 'Open Microsoft Authenticator and enter the number $number to approve the sign-in.'
+              : 'Open Microsoft Authenticator and approve the sign-in request.',
+        ));
+      }
+
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        throw MfaException('Timed out waiting for Microsoft Authenticator approval.');
+      }
+
+      // Submitting the challenge page either completes the sign-in (once the
+      // user has approved on their phone) or just re-serves the same page, so
+      // keep polling until the deadline.
+      if (step <= 2 || step % 10 == 0) {
+        log('MFA poll $step: POST ${target.path} fields=${fields.keys.join(", ")}'
+            '${number != null ? " number=$number" : ""}');
+      }
+      final resp = await client.post(target, body: fields).timeout(
+            remaining,
+            onTimeout: () => throw MfaException(
+                'Timed out waiting for Microsoft Authenticator approval.'),
+          );
+
+      url = resp.request?.url ?? target;
+      page = resp.body;
+
+      if (_extractRelayForm(page, url) != null) {
+        log('MFA approved after $step poll(s).');
+        return (page: page, url: url);
+      }
+
+      final nextDoc = parser.parse(page);
+      if (nextDoc.querySelector('input[type="password"]') != null) {
+        throw MfaException(_extractError(nextDoc) ??
+            'ADFS rejected the sign-in and went back to the password page.');
+      }
+      final error = _extractError(nextDoc);
+      if (error != null) throw MfaException(error);
+
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+  }
+
+  /// Debug summary of an MFA page: field values (Context is only measured)
+  /// and the inline script that drives the page.
+  String _describeMfaPage(dom.Document doc, Map<String, String> fields) {
+    final values = fields.entries
+        .map((e) => e.key == 'Context' ? 'Context(len=${e.value.length})' : '${e.key}="${e.value}"')
+        .join(' ');
+    final scripts = doc
+        .querySelectorAll('script')
+        .map((s) => s.text.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((t) => t.isNotEmpty && RegExp(r'complete|submit|__EVENTTARGET', caseSensitive: false).hasMatch(t))
+        .map((t) => t.substring(0, t.length.clamp(0, 700)))
+        .take(2)
+        .join(' || ');
+    return 'fields: $values | script: $scripts';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session reuse and keep-alive
+  // ---------------------------------------------------------------------------
+
+  /// Brings the session back without asking for credentials or MFA: loads the
+  /// saved cookies, and lets ADFS single sign-on mint a fresh RBS cookie if the
+  /// RBS one has lapsed. Returns false if a full login (with MFA) is needed.
+  /// Network errors are rethrown so a flaky connection never looks like a
+  /// logged-out session.
+  Future<bool> resumeSession() {
+    return _resuming ??= _resumeSession().whenComplete(() => _resuming = null);
+  }
+
+  Future<bool> _resumeSession() async {
+    if (!_restored) {
+      _restored = true;
+      final saved = await storage.getSession();
+      if (saved != null && !client.hasCookies) {
+        try {
+          client.importCookies(saved);
+        } catch (e) {
+          debugLog('Could not restore saved session: $e');
         }
       }
     }
 
-    if (!fields.containsKey('wresult')) {
-      throw Exception("No wresult found in ADFS reply. Check your Student ID and Password.");
+    if (!client.hasCookies) {
+      _setActive(false);
+      return false;
     }
 
-    print('Step 3 (Replay form to callback): POSTing ${fields.keys.join(", ")}');
-    var callbackResponse = await client.post(
-      Uri.parse(callback),
-      body: fields,
-    );
-    print('Step 3 Result: Status ${callbackResponse.statusCode}, URL: ${callbackResponse.request?.url}');
-    
-    // Use a small reflection-like hack to print cookies since they are private in SessionClient.
-    // We can just trust the hasAuthCookie, but let's print the headers sent and received.
-    print('Step 3 Response Headers: ${callbackResponse.headers}');
+    final valid = await _validateSession();
+    if (valid) await _persistSession();
+    _setActive(valid);
+    return valid;
+  }
 
-    if (callbackResponse.statusCode != 200 && callbackResponse.statusCode != 302) {
-       print('Warning: Unexpected status code from callback: ${callbackResponse.statusCode}');
+  /// GETs the protected page. Valid if it renders (with a CSRF token) rather
+  /// than bouncing to ADFS; if ADFS answers with a ready relay form (SSO is
+  /// still alive) that is replayed once.
+  Future<bool> _validateSession() async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final response = await client.get(Uri.parse(protected));
+      final url = response.request?.url;
+      debugLog('Session check: status ${response.statusCode}, URL: $url');
+
+      if (response.statusCode >= 400) return false;
+
+      if (url != null && url.host == Uri.parse(base).host) {
+        final token = _extractCsrf(response.body);
+        if (token != null) {
+          _cachedCsrfToken = token;
+          _lastValidated = DateTime.now();
+          return true;
+        }
+        debugLog('CRITICAL: No CSRF token in HTML. First 800 chars:');
+        debugLog(response.body.substring(0, response.body.length.clamp(0, 800)));
+        return false;
+      }
+
+      // Landed on ADFS. Without a relay form we would need credentials + MFA.
+      final fields = _extractRelayFields(response.body);
+      if (fields == null) return false;
+
+      debugLog('Session check: ADFS SSO still valid, replaying relay form.');
+      await client.post(Uri.parse(callback), body: fields);
+    }
+    return false;
+  }
+
+  Future<void> _persistSession() async {
+    try {
+      await storage.saveSession(client.exportCookies());
+    } catch (e) {
+      debugLog('Could not persist session: $e');
+    }
+  }
+
+  void _setActive(bool value) {
+    if (value) {
+      _keepAliveTimer ??= Timer.periodic(keepAliveInterval, (_) async {
+        try {
+          await resumeSession();
+        } catch (_) {
+          // Offline right now; try again on the next tick.
+        }
+      });
+    } else {
+      _keepAliveTimer?.cancel();
+      _keepAliveTimer = null;
     }
 
-    final hasCookie = client.hasAuthCookie();
-    print('Final Check: hasAuthCookie = $hasCookie');
-    return hasCookie;
+    if (_active != value) {
+      _active = value;
+      onSessionChanged?.call(value);
+    }
+  }
+
+  /// GET [url] on another ADFS-protected app (e.g. in4sit). If it bounces to
+  /// ADFS and the ADFS SSO session is still alive, the sign-in form is replayed
+  /// to that app and the GET retried. If ADFS asks for credentials instead, the
+  /// saved credentials are submitted (with MFA via [onMfaChallenge]) and the
+  /// result replayed. If that is not possible the ADFS page is returned as-is,
+  /// so callers should check where they ended up.
+  Future<http.Response> getWithSso(
+    Uri url, {
+    void Function(String message)? onLog,
+    void Function(MfaChallenge challenge)? onMfaChallenge,
+    Duration mfaTimeout = const Duration(minutes: 2),
+  }) async {
+    var response = await client.get(url);
+    var replayed = false;
+    var signedIn = false;
+
+    for (var i = 0; i < 3; i++) {
+      final landed = response.request?.url ?? url;
+      var relay = _extractRelayForm(response.body, landed);
+
+      if (relay == null && !signedIn && landed.host != url.host) {
+        debugLog('SSO: no relay form on ${landed.host}${landed.path} (status ${response.statusCode}). '
+            'Cookies sent there: ${client.cookieNamesFor(landed)}');
+        debugLog('SSO: page was: ${describeHtmlPage(response.body)}');
+
+        signedIn = true;
+        relay = await _signInAtAdfs(
+          landed,
+          response.body,
+          log: (m) {
+            debugLog(m);
+            onLog?.call(m);
+          },
+          onMfaChallenge: onMfaChallenge,
+          mfaTimeout: mfaTimeout,
+        );
+      }
+      if (relay == null) break;
+
+      debugLog('SSO: replaying ADFS relay form to ${relay.action.host}${relay.action.path}');
+      await client.post(relay.action, body: relay.fields);
+      replayed = true;
+      response = await client.get(url);
+    }
+    if (replayed) await _persistSession();
+    return response;
+  }
+
+  /// Submits the saved credentials to an ADFS login form (plus MFA) and
+  /// returns the relay form ADFS answers with, or null if there is no login
+  /// form or no saved credentials.
+  Future<({Uri action, Map<String, String> fields})?> _signInAtAdfs(
+    Uri pageUrl,
+    String page, {
+    required void Function(String) log,
+    void Function(MfaChallenge)? onMfaChallenge,
+    required Duration mfaTimeout,
+  }) async {
+    final doc = parser.parse(page);
+    dom.Element? form;
+    for (final f in doc.querySelectorAll('form')) {
+      if (f.querySelector('input[type="password"]') != null) {
+        form = f;
+        break;
+      }
+    }
+    if (form == null) return null;
+
+    final creds = await storage.getCredentials();
+    final username = creds['username'];
+    final password = creds['password'];
+    if (username == null || username.isEmpty || password == null || password.isEmpty) return null;
+
+    log('SSO unavailable, signing in to ADFS with saved credentials...');
+    final action = form.attributes['action'];
+    final target = (action == null || action.isEmpty) ? pageUrl : pageUrl.resolve(action);
+    final fields = _formFields(form)
+      ..addAll({
+        "UserName": "$username@sit.singaporetech.edu.sg",
+        "Password": password,
+        "AuthMethod": "FormAuthentication",
+        "Kmsi": "true",
+      });
+
+    final resp = await client.post(target, body: fields);
+    log('ADFS sign-in: Status ${resp.statusCode}');
+    var url = resp.request?.url ?? target;
+    var body = resp.body;
+
+    var relay = _extractRelayForm(body, url);
+    if (relay == null && _isMfaPage(body)) {
+      log('ADFS requires multi-factor authentication.');
+      final mfa = await _completeMfa(url, body,
+          mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge);
+      relay = _extractRelayForm(mfa.page, mfa.url);
+    }
+    if (relay == null) {
+      throw Exception(_extractError(parser.parse(body)) ?? 'ADFS sign-in failed. Check your credentials in Settings.');
+    }
+    return relay;
+  }
+
+  ({Uri action, Map<String, String> fields})? _extractRelayForm(String body, Uri pageUrl) {
+    final doc = parser.parse(body);
+    for (final form in doc.querySelectorAll('form')) {
+      final fields = <String, String>{};
+      for (final input in form.querySelectorAll('input')) {
+        final name = input.attributes['name'];
+        if (name != null && name.isNotEmpty) fields[name] = input.attributes['value'] ?? '';
+      }
+      final keys = fields.keys.map((k) => k.toLowerCase());
+      if (keys.contains('wresult') || keys.contains('samlresponse')) {
+        final action = form.attributes['action'];
+        return (
+          action: (action == null || action.isEmpty) ? pageUrl : pageUrl.resolve(action),
+          fields: fields,
+        );
+      }
+    }
+    return null;
+  }
+
+  Future<void> logout() async {
+    client.clearCookies();
+    _cachedCsrfToken = null;
+    _lastValidated = null;
+    await storage.clearSession();
+    _setActive(false);
+  }
+
+  void dispose() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
   }
 
   Future<String?> getCsrfToken() async {
-    if (_cachedCsrfToken != null) return _cachedCsrfToken;
+    final fresh = _lastValidated != null &&
+        DateTime.now().difference(_lastValidated!) < _tokenTtl;
+    if (_cachedCsrfToken != null && fresh) return _cachedCsrfToken;
 
-    final response = await client.get(Uri.parse(protected));
-    print('CSRF fetch status: ${response.statusCode}, URL: ${response.request?.url}');
-
-    if (response.statusCode >= 400) {
-      print('Error: Failed to fetch protected page for CSRF.');
-      return null;
+    final valid = await _validateSession();
+    if (valid) {
+      await _persistSession();
+      return _cachedCsrfToken;
     }
 
-    final doc = parser.parse(response.body);
+    // Session is gone and renewing it would need MFA.
+    _cachedCsrfToken = null;
+    _setActive(false);
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // HTML helpers
+  // ---------------------------------------------------------------------------
+
+  String? _extractCsrf(String body) {
+    final doc = parser.parse(body);
     final input = doc.querySelector('input[name="__RequestVerificationToken"]');
     final token = input?.attributes['value'];
+    if (token != null && token.isNotEmpty) return token;
 
-    if (token == null || token.isEmpty) {
-      // Also try a meta tag (some apps expose it that way)
-      final meta = doc.querySelector('meta[name="csrf-token"], meta[name="__RequestVerificationToken"]');
-      final metaToken = meta?.attributes['content'];
-      if (metaToken != null && metaToken.isNotEmpty) {
-        _cachedCsrfToken = metaToken;
-        return metaToken;
+    // Some apps expose it as a meta tag instead
+    final meta = doc.querySelector('meta[name="csrf-token"], meta[name="__RequestVerificationToken"]');
+    final metaToken = meta?.attributes['content'];
+    if (metaToken != null && metaToken.isNotEmpty) return metaToken;
+    return null;
+  }
+
+  Map<String, String>? _extractRelayFields(String body) {
+    final document = parser.parse(body);
+    final fields = <String, String>{};
+    for (final input in document.querySelectorAll('input[type="hidden"]')) {
+      final name = input.attributes['name'];
+      final value = input.attributes['value'];
+      if (name != null && value != null && ['wa', 'wresult', 'wctx'].contains(name.toLowerCase())) {
+        fields[name] = value;
       }
+    }
+    return fields.containsKey('wresult') ? fields : null;
+  }
 
-      print('CRITICAL: No CSRF token in HTML. First 800 chars:');
-      print(response.body.substring(0, response.body.length.clamp(0, 800)));
-      return null;
+  /// A page that is not the relay form, has no password box (so it is not
+  /// the login form re-rendered after a bad password) but does have a form.
+  bool _isMfaPage(String body) {
+    final doc = parser.parse(body);
+    if (doc.querySelector('input[type="password"]') != null) return false;
+    return _pickForm(doc) != null;
+  }
+
+  dom.Element? _pickForm(dom.Document doc) {
+    final forms = doc.querySelectorAll('form');
+    if (forms.isEmpty) return null;
+    return forms.firstWhere(
+      (f) => f.querySelector('input[name="AuthMethod"], input[name="Context"]') != null,
+      orElse: () => forms.first,
+    );
+  }
+
+  /// Collects what a browser would submit for [form]: hidden/text inputs,
+  /// checked boxes/radios, the Authenticator-ish radio if none is checked, and
+  /// the first named submit button.
+  Map<String, String> _formFields(dom.Element form) {
+    final fields = <String, String>{};
+    final radios = <String, List<dom.Element>>{};
+    String? submitName;
+    String? submitValue;
+
+    for (final input in form.querySelectorAll('input, select, textarea')) {
+      final name = input.attributes['name'];
+      if (name == null || name.isEmpty) continue;
+      final type = (input.attributes['type'] ?? 'text').toLowerCase();
+
+      switch (type) {
+        case 'submit':
+        case 'button':
+        case 'image':
+          if (submitName == null) {
+            submitName = name;
+            submitValue = input.attributes['value'] ?? '';
+          }
+        case 'checkbox':
+          if (input.attributes.containsKey('checked')) {
+            fields[name] = input.attributes['value'] ?? 'on';
+          }
+        case 'radio':
+          radios.putIfAbsent(name, () => []).add(input);
+        default:
+          fields[name] = input.attributes['value'] ?? '';
+      }
     }
 
-    _cachedCsrfToken = token;
-    return token;
+    radios.forEach((name, group) {
+      final checked = group.where((r) => r.attributes.containsKey('checked'));
+      final preferred = group.where((r) => RegExp(
+              r'authenticator|notification|approve|push',
+              caseSensitive: false)
+          .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));
+      final pick = checked.isNotEmpty
+          ? checked.first
+          : preferred.isNotEmpty
+              ? preferred.first
+              : group.first;
+      fields[name] = pick.attributes['value'] ?? '';
+    });
+
+    if (submitName != null) fields[submitName] = submitValue ?? '';
+    return fields;
+  }
+
+  String? _extractMfaNumber(dom.Document doc) {
+    // An element that is just the number (id/class mentions number or code)
+    for (final el in doc.querySelectorAll('[id*="umber"], [class*="umber"], [id*="ode"], [class*="ode"]')) {
+      final text = el.text.trim();
+      if (RegExp(r'^\d{2,3}$').hasMatch(text)) return text;
+    }
+    // "... enter the number 57 ..." in the page text
+    final text = doc.body?.text.replaceAll(RegExp(r'\s+'), ' ') ?? '';
+    final match = RegExp(r'number\D{0,40}?(\d{2,3})\b', caseSensitive: false).firstMatch(text);
+    return match?.group(1);
+  }
+
+  String? _extractError(dom.Document doc) {
+    for (final el in doc.querySelectorAll('#errorText, #error, .error, .error-text, [id*="rror"]')) {
+      final text = el.text.trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
   }
 }
-

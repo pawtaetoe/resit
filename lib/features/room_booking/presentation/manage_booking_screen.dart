@@ -34,18 +34,11 @@ class _ManageBookingScreenState extends ConsumerState<ManageBookingScreen> {
   Future<void> _attemptAutoLogin() async {
     setState(() => _isAutoLoggingIn = true);
     try {
-      final storage = ref.read(secureStorageProvider);
-      final creds = await storage.getCredentials();
-      final username = creds['username'];
-      final password = creds['password'];
-      
-      if (username != null && username.isNotEmpty && password != null && password.isNotEmpty) {
-        final authService = ref.read(authServiceProvider);
-        final success = await authService.login(username, password);
-        ref.read(authStateProvider.notifier).state = success;
-        if (success && mounted) {
-          _fetchBookings();
-        }
+      // A fresh login needs MFA approval, so only reuse the saved session
+      // here. If it has lapsed the user reconnects from Settings.
+      final success = await ref.read(authServiceProvider).resumeSession();
+      if (success && mounted) {
+        _fetchBookings();
       }
     } catch (e) {
       // Auto login failed silently

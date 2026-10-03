@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
+import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 
 class ServicesScreen extends StatelessWidget {
   const ServicesScreen({super.key});
@@ -70,6 +71,48 @@ class ServicesScreen extends StatelessWidget {
                       ),
                     ],
                   )
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            elevation: 4,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.calendar_month, size: 32, color: Colors.blueAccent),
+                      SizedBox(width: 12),
+                      Text(
+                        'Timetable',
+                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Your class schedule from in4SIT', style: TextStyle(color: Colors.grey)),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const TimetableScreen()),
+                        );
+                      },
+                      icon: const Icon(Icons.view_agenda),
+                      label: const Text('View'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),

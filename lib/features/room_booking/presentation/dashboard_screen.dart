@@ -34,16 +34,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   Future<void> _attemptAutoLogin() async {
     setState(() => _isAutoLoggingIn = true);
     try {
-      final storage = ref.read(secureStorageProvider);
-      final creds = await storage.getCredentials();
-      final username = creds['username'];
-      final password = creds['password'];
-      
-      if (username != null && username.isNotEmpty && password != null && password.isNotEmpty) {
-        final authService = ref.read(authServiceProvider);
-        final success = await authService.login(username, password);
-        ref.read(authStateProvider.notifier).state = success;
-      }
+      // A fresh login needs MFA approval, so only reuse the saved session
+      // here. If it has lapsed the user reconnects from Settings.
+      await ref.read(authServiceProvider).resumeSession();
     } catch (e) {
       // Auto login failed silently
     } finally {
@@ -123,28 +116,39 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
 
+  /// Returns the slots covering the whole requested range, or an empty list
+  /// if any part of it is taken or missing. E.g. 13:00-14:00 needs both
+  /// 13:00-13:30 and 13:30-14:00 to be available.
   List<RoomSlot> _slotsInRange(List<RoomSlot> slots, String rangeStr) {
     final parts = rangeStr.split("-");
     final lo = _toMin(parts[0]);
     final hi = _toMin(parts[1]);
-    
-    List<RoomSlot> picks = [];
+    if (hi <= lo) return [];
+
+    final inRange = <({RoomSlot slot, int start, int end})>[];
     for (var sl in slots) {
-      if (!sl.available) continue;
-      
       try {
         final lblParts = sl.label.split("-");
         final sMin = _toMin(lblParts[0]);
         final eMin = _toMin(lblParts[1]);
         if (sMin >= lo && eMin <= hi) {
-          picks.add(sl);
+          inRange.add((slot: sl, start: sMin, end: eMin));
         }
       } catch (e) {
         // ignore malformed labels
       }
     }
-    picks.sort((a, b) => _toMin(a.label.split("-")[0]).compareTo(_toMin(b.label.split("-")[0])));
-    return picks;
+    inRange.sort((a, b) => a.start.compareTo(b.start));
+
+    // Slots must be available and run back-to-back from lo to hi.
+    var cursor = lo;
+    for (final s in inRange) {
+      if (!s.slot.available || s.start != cursor) return [];
+      cursor = s.end;
+    }
+    if (cursor != hi) return [];
+
+    return inRange.map((s) => s.slot).toList();
   }
 
   Future<void> _fetchRooms() async {

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/core/widgets/mfa_card.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -14,6 +16,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _isConnected = false;
+  MfaChallenge? _mfaChallenge;
   String _logOutput = "";
 
   @override
@@ -37,32 +40,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _testConnection() async {
     setState(() {
       _isLoading = true;
+      _mfaChallenge = null;
       _logOutput = "Starting connection test...\n";
     });
-    
+
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
-    
+
     try {
       // Save them
       final storage = ref.read(secureStorageProvider);
+      final previous = await storage.getCredentials();
+      final unchanged = previous['username'] == username && previous['password'] == password;
       await storage.saveCredentials(username, password);
       setState(() => _logOutput += "Credentials saved to secure storage.\n");
 
-      // Test auth
       final authService = ref.read(authServiceProvider);
-      setState(() => _logOutput += "Initiating ADFS login sequence...\n");
-      
-      final success = await authService.login(username, password);
-      
+
+      // Same credentials and a live session: no need to bother Authenticator.
+      var success = false;
+      if (unchanged) {
+        setState(() => _logOutput += "Checking the existing session...\n");
+        success = await authService.resumeSession();
+        setState(() => _logOutput += success
+            ? "Existing session is still valid, no MFA needed.\n"
+            : "Saved session has expired.\n");
+      }
+
+      if (!success) {
+        setState(() => _logOutput += "Initiating ADFS login sequence...\n");
+
+        success = await authService.login(
+          username,
+          password,
+          onMfaChallenge: (challenge) {
+            if (!mounted) return;
+            setState(() {
+              _mfaChallenge = challenge;
+              _logOutput += "Waiting for Microsoft Authenticator approval...\n";
+            });
+          },
+        );
+      }
+
       ref.read(authStateProvider.notifier).state = success;
 
       setState(() {
         _isLoading = false;
         _isConnected = success;
-        _logOutput += success ? "Login SUCCESS!\n" : "Login FAILED. Check credentials.\n";
+        _mfaChallenge = null;
+        _logOutput += success ? "Connected! Session saved.\n" : "Login FAILED. Check credentials.\n";
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -75,6 +104,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       setState(() {
         _isLoading = false;
         _isConnected = false;
+        _mfaChallenge = null;
         _logOutput += "FATAL ERROR: $e\n";
       });
     }
@@ -97,7 +127,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text('Your credentials are encrypted and stored locally on your device.'),
+              const Text(
+                'Your credentials are stored locally on your device. Signing in will asks for approval in '
+                'Microsoft Authenticator, the session is then kept so you should not be asked again '
+                'until it expires.',
+              ),
               const SizedBox(height: 24),
               TextField(
                 controller: _usernameController,
@@ -126,10 +160,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 child: _isLoading 
                     ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text('Save & Test Connection'),
+                    : const Text('Save credential locally'),
               ),
+              if (_mfaChallenge != null) ...[
+                const SizedBox(height: 24),
+                MfaCard(challenge: _mfaChallenge!),
+              ],
               const SizedBox(height: 24),
-              if (_isConnected)
+              if (_isConnected || ref.watch(authStateProvider))
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
