@@ -7,6 +7,7 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
+import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
 class TimetableScreen extends ConsumerStatefulWidget {
@@ -203,8 +204,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       final nowDate = DateTime(today.year, today.month, today.day);
       final todayIndex = nowDate.difference(monday).inDays;
       final nowMin = today.hour * 60 + today.minute;
-      final showNow = todayIndex >= 0 && todayIndex < _dayCount &&
-          nowMin >= startHour * 60 && nowMin <= endHour * 60;
+      final showNow = todayIndex >= 0 && todayIndex < _dayCount && nowMin >= startHour * 60 && nowMin <= endHour * 60;
 
       final header = Row(
         children: [
@@ -217,7 +217,8 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                 width: colWidth,
                 child: Column(
                   children: [
-                    Text(DateFormat('E').format(date), style: TextStyle(fontSize: 11, color: isToday ? scheme.primary : muted)),
+                    Text(DateFormat('E').format(date),
+                        style: TextStyle(fontSize: 11, color: isToday ? scheme.primary : muted)),
                     const SizedBox(height: 2),
                     CircleAvatar(
                       radius: 13,
@@ -401,40 +402,49 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
   @override
   Widget build(BuildContext context) {
     final monday = _weekStart(_page);
+    final thisWeek = _page == _initialPage;
+    final loading = _loadingWeeks.contains(monday);
+    final navStyle = IconButton.styleFrom(minimumSize: const Size(48, 52));
+
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      appBar: thumbAppBar(
+        'Timetable',
+        subtitle: Text(
+          thisWeek ? 'This week · ${_weekLabel(monday)}' : _weekLabel(monday),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+      // Week navigation sits under the thumb; swiping left/right works too.
+      bottomNavigationBar: ThumbBar(
+        child: Row(
           children: [
-            const Text('Timetable'),
-            Text(
-              _page == _initialPage ? 'This week · ${_weekLabel(monday)}' : _weekLabel(monday),
-              style: Theme.of(context).textTheme.bodySmall,
+            IconButton(
+              style: navStyle,
+              tooltip: 'Previous week',
+              icon: const Icon(Icons.chevron_left),
+              onPressed: () => _goToPage(_page - 1),
+            ),
+            Expanded(
+              child: TextButton(
+                style: TextButton.styleFrom(minimumSize: const Size(0, 52)),
+                onPressed: thisWeek ? null : () => _goToPage(_initialPage),
+                child: Text(thisWeek ? 'This week' : 'Back to this week', overflow: TextOverflow.ellipsis),
+              ),
+            ),
+            IconButton(
+              style: navStyle,
+              tooltip: 'Next week',
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () => _goToPage(_page + 1),
+            ),
+            IconButton(
+              style: navStyle,
+              tooltip: 'Refresh',
+              icon: const Icon(Icons.refresh),
+              onPressed: loading ? null : () => _loadWeek(monday, force: true),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            tooltip: 'Previous week',
-            icon: const Icon(Icons.chevron_left),
-            onPressed: () => _goToPage(_page - 1),
-          ),
-          IconButton(
-            tooltip: 'Back to this week',
-            icon: const Icon(Icons.today),
-            onPressed: _page == _initialPage ? null : () => _goToPage(_initialPage),
-          ),
-          IconButton(
-            tooltip: 'Next week',
-            icon: const Icon(Icons.chevron_right),
-            onPressed: () => _goToPage(_page + 1),
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadingWeeks.contains(monday) ? null : () => _loadWeek(monday, force: true),
-          ),
-        ],
       ),
       body: PageView.builder(
         controller: _pageController,

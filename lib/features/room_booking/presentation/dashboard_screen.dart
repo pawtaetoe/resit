@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
+import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
@@ -86,6 +87,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   String? _error;
   bool _errorIsSession = false;
   String _filter = '';
+  final _resultsKey = GlobalKey();
 
   @override
   void initState() {
@@ -169,17 +171,32 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
         final picks = slotsInRange(rm.slots, _startMin, _endMin);
         if (picks.isNotEmpty) free.add(RoomWithSlots(rm.room, picks));
       }
-      if (mounted) setState(() => _rooms = free);
+      if (mounted) {
+        setState(() => _rooms = free);
+        _revealResults();
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
           _error = friendlyError(e);
           _errorIsSession = isSessionError(e);
         });
+        _revealResults();
       }
     } finally {
       if (mounted) setState(() => _searching = false);
     }
+  }
+
+  /// The search button is at the bottom but results appear under the form,
+  /// so scroll them into view.
+  void _revealResults() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _resultsKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic);
+      }
+    });
   }
 
   Future<void> _book(RoomWithSlots room) async {
@@ -225,7 +242,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     final overQuota = maxLeft != null && _duration > maxLeft;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Book a room')),
+      appBar: thumbAppBar('Book a room'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
         children: [
@@ -248,36 +265,33 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           ],
           const SizedBox(height: 16),
           QuotaCard(day: _date),
-          const SizedBox(height: 12),
-          Card(
-            color: theme.colorScheme.secondaryContainer,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Icon(Icons.schedule, color: theme.colorScheme.onSecondaryContainer),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _slotSummary,
-                      style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.onSecondaryContainer),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          BusyButton(
-            onPressed: _startOptions().isEmpty || overQuota ? null : _search,
-            busy: _searching,
-            icon: Icons.search,
-            label: 'Find free rooms',
-            busyLabel: 'Checking rooms…',
-          ),
           const SizedBox(height: 24),
+          SizedBox(key: _resultsKey),
           ..._buildResults(),
         ],
+      ),
+      // The chosen slot and the search button stay under the thumb while
+      // the options scroll above.
+      bottomNavigationBar: ThumbBar(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              _slotSummary,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            BusyButton(
+              onPressed: _startOptions().isEmpty || overQuota ? null : _search,
+              busy: _searching,
+              icon: Icons.search,
+              label: 'Find free rooms',
+              busyLabel: 'Checking rooms…',
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -6,6 +6,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
+import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/quota_card.dart';
@@ -76,8 +77,8 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
         final raw = await service.getBookings(bookingStatus: 'current');
         list = raw.where((b) => b.status.toLowerCase() == 'confirmed').toList();
         // Soonest first: that's the one you need next.
-        list.sort((a, b) => _parseBookingDateTime(a.date, a.timeRange)
-            .compareTo(_parseBookingDateTime(b.date, b.timeRange)));
+        list.sort(
+            (a, b) => _parseBookingDateTime(a.date, a.timeRange).compareTo(_parseBookingDateTime(b.date, b.timeRange)));
       } else {
         // History plus current bookings that are no longer confirmed.
         List<Booking> history = [];
@@ -99,8 +100,8 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
           combined[b.bookingRef] = b;
         }
         list = combined.values.toList()
-          ..sort((a, b) => _parseBookingDateTime(b.date, b.timeRange)
-              .compareTo(_parseBookingDateTime(a.date, a.timeRange)));
+          ..sort((a, b) =>
+              _parseBookingDateTime(b.date, b.timeRange).compareTo(_parseBookingDateTime(a.date, a.timeRange)));
       }
 
       // Ignore a late answer for a tab the user has already left.
@@ -118,27 +119,16 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
   }
 
   Future<void> _cancel(Booking booking) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final scheme = Theme.of(context).colorScheme;
-        return AlertDialog(
-          icon: Icon(Icons.event_busy, color: scheme.error),
-          title: const Text('Cancel this booking?'),
-          content: Text(
-            '${booking.roomName}\n${booking.date}, ${booking.timeRange}\n\n'
-            "The room is released straight away and this can't be undone.",
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep booking')),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: scheme.error, foregroundColor: scheme.onError),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Cancel booking'),
-            ),
-          ],
-        );
-      },
+    final confirmed = await showChoiceSheet<bool>(
+      context,
+      icon: Icons.event_busy,
+      title: 'Cancel this booking?',
+      message: '${booking.roomName}\n${booking.date}, ${booking.timeRange}\n\n'
+          "The room is released straight away and this can't be undone.",
+      choices: const [
+        SheetChoice(true, 'Cancel booking', icon: Icons.event_busy, primary: true, danger: true),
+        SheetChoice(false, 'Keep booking'),
+      ],
     );
     if (confirmed != true || !mounted) return;
 
@@ -171,38 +161,29 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('My bookings'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh),
-            onPressed: _isLoading ? null : _fetchBookings,
-          ),
-        ],
+      appBar: thumbAppBar('My bookings'),
+      // Switching lists sits next to back, under the thumb; refresh is a
+      // pull-down on the list.
+      bottomNavigationBar: ThumbBar(
+        child: SegmentedButton<_Tab>(
+          showSelectedIcon: false,
+          style: SegmentedButton.styleFrom(minimumSize: const Size(0, 52)),
+          segments: const [
+            ButtonSegment(value: _Tab.upcoming, label: Text('Upcoming'), icon: Icon(Icons.upcoming_outlined)),
+            ButtonSegment(value: _Tab.past, label: Text('Past'), icon: Icon(Icons.history)),
+          ],
+          selected: {_tab},
+          onSelectionChanged: (s) {
+            setState(() {
+              _tab = s.first;
+              _bookings = null;
+            });
+            _fetchBookings();
+          },
+        ),
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: SegmentedButton<_Tab>(
-                segments: const [
-                  ButtonSegment(value: _Tab.upcoming, label: Text('Upcoming'), icon: Icon(Icons.upcoming_outlined)),
-                  ButtonSegment(value: _Tab.past, label: Text('Past & cancelled'), icon: Icon(Icons.history)),
-                ],
-                selected: {_tab},
-                onSelectionChanged: (s) {
-                  setState(() {
-                    _tab = s.first;
-                    _bookings = null;
-                  });
-                  _fetchBookings();
-                },
-              ),
-            ),
-          ),
           SizedBox(height: 3, child: _isLoading && _bookings != null ? const LinearProgressIndicator() : null),
           Expanded(child: _buildContent()),
         ],
@@ -344,7 +325,8 @@ class _BookingCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(booking.roomName, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                    child: Text(booking.roomName,
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                   ),
                   const SizedBox(width: 8),
                   StatusPill(label: booking.status, tone: tone, icon: icon),

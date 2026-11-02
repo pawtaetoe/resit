@@ -6,6 +6,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
+import 'package:resit/core/widgets/thumb_bar.dart';
 
 /// Account tab: sign in with the SIT (ADFS) account, see the session status,
 /// sign out.
@@ -123,36 +124,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _signOut() async {
-    var forget = false;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          icon: const Icon(Icons.logout),
-          title: const Text('Sign out?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text("You'll need to approve the next sign-in in Microsoft Authenticator."),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: forget,
-                onChanged: (v) => setDialogState(() => forget = v ?? false),
-                title: const Text('Also remove my saved student ID and password'),
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Stay signed in')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sign out')),
-          ],
-        ),
-      ),
+    // One tap per outcome instead of a checkbox plus a button.
+    final choice = await showChoiceSheet<String>(
+      context,
+      icon: Icons.logout,
+      title: 'Sign out?',
+      message: "You'll need to approve the next sign-in in Microsoft Authenticator.",
+      choices: const [
+        SheetChoice('keep', 'Sign out', icon: Icons.logout, primary: true),
+        SheetChoice('forget', 'Sign out and forget my ID and password', icon: Icons.delete_outline, danger: true),
+        SheetChoice('stay', 'Stay signed in'),
+      ],
     );
-    if (confirmed != true) return;
+    if (choice == null || choice == 'stay') return;
+    final forget = choice == 'forget';
 
     await ref.read(authServiceProvider).logout();
     ref.read(authStateProvider.notifier).state = false;
@@ -175,6 +160,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Account')),
+      // The main action stays pinned above the tabs, within thumb reach.
+      bottomNavigationBar: ThumbBar(
+        child: BusyButton(
+          onPressed: _signIn,
+          busy: _busy,
+          icon: Icons.login,
+          label: signedIn ? 'Sign in again' : 'Sign in',
+          busyLabel: _mfaChallenge != null ? 'Waiting for approval…' : 'Signing in…',
+        ),
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -205,16 +200,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const SizedBox(height: 16),
                   _ErrorBox(message: _error!),
                 ],
-                const SizedBox(height: 16),
-                BusyButton(
-                  onPressed: _signIn,
-                  busy: _busy,
-                  icon: Icons.login,
-                  label: signedIn ? 'Sign in again' : 'Sign in',
-                  busyLabel: _mfaChallenge != null ? 'Waiting for approval…' : 'Signing in…',
-                ),
                 if (signedIn) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16),
                   OutlinedButton.icon(
                     onPressed: _busy ? null : _signOut,
                     icon: const Icon(Icons.logout),
@@ -303,7 +290,12 @@ class _StatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final (Tone tone, IconData icon, String title, String detail) = signedIn
-        ? (Tone.success, Icons.verified_user_outlined, 'Signed in', username != null ? 'Student ID $username' : 'Session active')
+        ? (
+            Tone.success,
+            Icons.verified_user_outlined,
+            'Signed in',
+            username != null ? 'Student ID $username' : 'Session active'
+          )
         : busy
             ? (Tone.info, Icons.sync, 'Connecting…', 'Checking your SIT session')
             : (Tone.warning, Icons.person_off_outlined, 'Not signed in', 'Sign in below to use bookings and timetable');

@@ -54,6 +54,22 @@ void main() {
     expect(find.text('Student ID'), findsOneWidget);
   });
 
+  testWidgets('Back sits in the bottom bar and returns Home', (tester) async {
+    await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('My bookings'));
+    await tester.pumpAndSettle();
+    final back = find.byTooltip('Back');
+    expect(back, findsOneWidget);
+    // In the lower part of the screen, not the top corner.
+    expect(tester.getCenter(back).dy, greaterThan(tester.view.physicalSize.height / tester.view.devicePixelRatio / 2));
+
+    await tester.tap(back);
+    await tester.pumpAndSettle();
+    expect(find.text('Not signed in'), findsOneWidget);
+  });
+
   group('slotsInRange', () {
     final slots = [_slot('13:00-13:30'), _slot('13:30-14:00'), _slot('14:00-14:30', available: false)];
 

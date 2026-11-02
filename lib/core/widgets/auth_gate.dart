@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/thumb_bar.dart';
 
 /// Sends the user to the Account tab, closing any pushed screens.
 void goToAccount(BuildContext context, WidgetRef ref) {
@@ -54,7 +55,8 @@ class _AuthGateState extends ConsumerState<AuthGate> {
   Widget build(BuildContext context) {
     if (ref.watch(authStateProvider)) return widget.builder(context);
 
-    final Widget body;
+    final MessageView body;
+    Widget? action;
     if (_restoring || ref.watch(sessionRestoringProvider)) {
       body = const MessageView(
         icon: Icons.sync,
@@ -63,29 +65,32 @@ class _AuthGateState extends ConsumerState<AuthGate> {
         action: SizedBox(width: 160, child: LinearProgressIndicator()),
       );
     } else if (_error != null) {
-      body = MessageView(
-        icon: Icons.cloud_off,
-        title: "Couldn't check your session",
-        message: _error,
-        action: FilledButton.icon(
-          onPressed: _restore,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Try again'),
-        ),
+      body = MessageView(icon: Icons.cloud_off, title: "Couldn't check your session", message: _error);
+      action = FilledButton.icon(
+        onPressed: _restore,
+        icon: const Icon(Icons.refresh),
+        label: const Text('Try again'),
       );
     } else {
-      body = MessageView(
+      body = const MessageView(
         icon: Icons.lock_outline,
         title: 'Sign in to continue',
         message: 'Connect your SIT account once and the app keeps you signed in.',
-        action: FilledButton.icon(
-          onPressed: () => goToAccount(context, ref),
-          icon: const Icon(Icons.login),
-          label: const Text('Go to sign in'),
-        ),
+      );
+      action = FilledButton.icon(
+        onPressed: () => goToAccount(context, ref),
+        icon: const Icon(Icons.login),
+        label: const Text('Go to sign in'),
       );
     }
 
-    return Scaffold(appBar: AppBar(title: Text(widget.title)), body: body);
+    // The action goes in the bottom bar, next to back, within thumb reach.
+    return Scaffold(
+      appBar: thumbAppBar(widget.title),
+      body: body,
+      bottomNavigationBar: ThumbBar(
+        child: action == null ? null : SizedBox(height: 52, child: action),
+      ),
+    );
   }
 }
