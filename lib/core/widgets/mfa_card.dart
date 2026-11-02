@@ -24,10 +24,10 @@ class MfaCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.phonelink_lock, size: 40, color: fg),
+            Icon(challenge.automatic ? Icons.password : Icons.phonelink_lock, size: 40, color: fg),
             const SizedBox(height: 8),
             Text(
-              'Approve on your phone',
+              challenge.automatic ? 'Verifying with your code' : 'Approve on your phone',
               style: theme.textTheme.titleLarge?.copyWith(color: fg, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
@@ -59,7 +59,9 @@ class MfaCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Waiting for approval. This screen updates on its own.',
+              challenge.automatic
+                  ? 'Nothing to do on your phone.'
+                  : 'Waiting for approval. This screen updates on its own.',
               style: theme.textTheme.bodySmall?.copyWith(color: fg),
             ),
           ],

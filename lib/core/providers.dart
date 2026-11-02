@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/auth/totp.dart';
 import 'package:resit/features/room_booking/data/booking_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
@@ -65,3 +66,15 @@ WeeklyQuota? weeklyQuotaFor(WidgetRef ref, DateTime day) {
   if (data == null) return null;
   return WeeklyQuota.from(data.bookings, day, data.types);
 }
+
+/// The saved authenticator secret for automatic verification codes, or null
+/// when not set up. Invalidate after saving or removing it.
+final totpConfigProvider = FutureProvider<TotpConfig?>((ref) async {
+  final saved = await ref.watch(secureStorageProvider).getTotp();
+  if (saved == null || saved.isEmpty) return null;
+  try {
+    return TotpConfig.parse(saved);
+  } catch (_) {
+    return null;
+  }
+});
