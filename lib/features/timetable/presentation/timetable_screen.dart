@@ -367,22 +367,31 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
 
     if (week == null && error != null) {
       final session = isSessionError(error);
+      final retry = FilledButton.icon(
+        onPressed: () => _loadWeek(monday, force: true),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Try again'),
+      );
       return MessageView(
         icon: session ? Icons.lock_clock : Icons.cloud_off,
         tone: Tone.danger,
-        title: session ? 'Session expired' : "Couldn't load this week",
+        title: session ? "Couldn't sign in to in4SIT" : "Couldn't load this week",
         message: friendlyError(error),
+        detail: errorDetail(error),
         action: session
-            ? FilledButton.icon(
-                onPressed: () => goToAccount(context, ref),
-                icon: const Icon(Icons.login),
-                label: const Text('Sign in again'),
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  retry,
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: () => goToAccount(context, ref),
+                    icon: const Icon(Icons.login),
+                    label: const Text('Sign in again'),
+                  ),
+                ],
               )
-            : FilledButton.icon(
-                onPressed: () => _loadWeek(monday, force: true),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-              ),
+            : retry,
       );
     }
 

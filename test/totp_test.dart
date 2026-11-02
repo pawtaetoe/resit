@@ -157,4 +157,65 @@ void main() {
       expect(codesSeen, isEmpty);
     });
   });
+
+  group('Single sign-on to another app that asks for MFA again', () {
+    const secret = 'JBSWY3DPEHPK3PXP';
+    final config = TotpConfig.parse(secret);
+    final target = Uri.parse('https://in4sit.example.edu/psc/schedule');
+    final adfs = Uri.parse('https://fs.example.edu/adfs/ls/?wa=wsignin1.0');
+
+    const mfaPage = '''
+      <html><body>
+        <form method="post" action="/adfs/ls/?wa=wsignin1.0&amp;client-request-id=2">
+          <input type="hidden" name="AuthMethod" value="AzureMfaAuthentication"/>
+          <input type="hidden" name="Context" value="ctx2"/>
+          <input type="text" name="VerificationCode"/>
+          <input type="submit" name="SignIn" value="Sign in"/>
+        </form>
+      </body></html>''';
+    const relayPage = '''
+      <html><body>
+        <form method="POST" action="https://in4sit.example.edu/psp/login">
+          <input type="hidden" name="wa" value="wsignin1.0"/>
+          <input type="hidden" name="wresult" value="token"/>
+        </form>
+      </body></html>''';
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+    });
+
+    test('completes the MFA page without a password page and lands on the app', () async {
+      FlutterSecureStorage.setMockInitialValues({'mfa_totp_uri': config.toUri()});
+      var signedIn = false;
+      String? codeSent;
+      final mock = MockClient((request) async {
+        if (request.url.host == target.host && request.method == 'GET') {
+          return signedIn
+              ? http.Response('<html>schedule</html>', 200, request: request)
+              // Not signed in yet: the app bounces to ADFS, which asks only for MFA.
+              : http.Response(mfaPage, 200, request: http.Request('GET', adfs));
+        }
+        if (request.url.host == adfs.host && request.method == 'POST') {
+          codeSent = request.bodyFields['VerificationCode'];
+          expect(request.bodyFields['Context'], 'ctx2');
+          return http.Response(relayPage, 200, request: request);
+        }
+        if (request.url.path == '/psp/login') {
+          signedIn = true;
+          return http.Response('', 200, request: request);
+        }
+        return http.Response('not found', 404, request: request);
+      });
+      final auth = AuthService(SessionClient(mock), SecureStorage());
+
+      final response = await auth.getWithSso(target);
+      auth.dispose();
+
+      expect(codeSent, config.codeAt(DateTime.now()));
+      expect(response.request?.url.host, target.host);
+      expect(response.body, contains('schedule'));
+    });
+  });
 }

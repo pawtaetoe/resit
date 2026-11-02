@@ -30,7 +30,7 @@ class SessionExpiredException implements Exception {
 
   @override
   String toString() =>
-      'Session expired. Reconnect from Settings (Microsoft Authenticator approval needed).'
+      'Session expired. Sign in again from Account.'
       '${detail != null ? '\n\n$detail' : ''}';
 }
 
@@ -516,8 +516,10 @@ class AuthService {
   }
 
   /// Submits the saved credentials to an ADFS login form (plus MFA) and
-  /// returns the relay form ADFS answers with, or null if there is no login
-  /// form or no saved credentials.
+  /// returns the relay form ADFS answers with. If ADFS skips the password and
+  /// goes straight to MFA (an app that asks for MFA again even though the
+  /// ADFS session is alive), that MFA page is completed instead. Returns null
+  /// if the page is neither, or there are no saved credentials.
   Future<({Uri action, Map<String, String> fields})?> _signInAtAdfs(
     Uri pageUrl,
     String page, {
@@ -533,7 +535,12 @@ class AuthService {
         break;
       }
     }
-    if (form == null) return null;
+    if (form == null) {
+      if (!_isAdfsMfaPage(doc)) return null;
+      log('ADFS asks for multi-factor authentication for this app.');
+      final mfa = await _completeMfa(pageUrl, page, mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge);
+      return _extractRelayForm(mfa.page, mfa.url);
+    }
 
     final creds = await storage.getCredentials();
     final username = creds['username'];
@@ -647,6 +654,14 @@ class AuthService {
       }
     }
     return fields.containsKey('wresult') ? fields : null;
+  }
+
+  /// An ADFS MFA page: no password box, and a form carrying ADFS's
+  /// AuthMethod/Context fields. Stricter than [_isMfaPage], which only runs
+  /// right after a password was submitted.
+  bool _isAdfsMfaPage(dom.Document doc) {
+    if (doc.querySelector('input[type="password"]') != null) return false;
+    return doc.querySelector('form input[name="AuthMethod"], form input[name="Context"]') != null;
   }
 
   /// A page that is not the relay form, has no password box (so it is not
