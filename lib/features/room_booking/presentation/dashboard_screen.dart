@@ -350,7 +350,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       return const Text('No more slots today. Pick another day.');
     }
     return DropdownButtonFormField<int>(
-      initialValue: options.contains(_startMin) ? _startMin : options.first,
+      value: options.contains(_startMin) ? _startMin : options.first,
       key: ValueKey(_date), // rebuild with fresh options when the day changes
       decoration: const InputDecoration(prefixIcon: Icon(Icons.access_time)),
       menuMaxHeight: 320,
