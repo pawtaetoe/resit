@@ -9,7 +9,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 /// Sends the user to the Account tab, closing any pushed screens.
 void goToAccount(BuildContext context, WidgetRef ref) {
   Navigator.of(context).popUntil((route) => route.isFirst);
-  ref.read(homeTabProvider.notifier).state = 1;
+  ref.read(homeTabProvider.notifier).state = AppTab.account;
 }
 
 /// Shows [builder]'s screen once signed in. Until then it asks the session

@@ -55,9 +55,16 @@ final sessionControllerProvider = StateNotifierProvider<SessionController, Sessi
 /// True while the app is checking the session or signing back in.
 final sessionRestoringProvider = Provider<bool>((ref) => ref.watch(sessionControllerProvider).busy);
 
-/// Which bottom tab is showing (0 = Home, 1 = Account). Lets other screens
-/// send the user to Account to sign in.
-final homeTabProvider = StateProvider<int>((ref) => 0);
+/// The bottom tabs, by position.
+abstract final class AppTab {
+  static const home = 0;
+  static const services = 1;
+  static const account = 2;
+}
+
+/// Which bottom tab is showing (see [AppTab]). Lets other screens send the
+/// user to a tab, e.g. Account to sign in.
+final homeTabProvider = StateProvider<int>((ref) => AppTab.home);
 
 /// The student's bookings plus which room type each room is, used to work
 /// out the weekly allowance (see quota.dart). Refetched whenever a screen

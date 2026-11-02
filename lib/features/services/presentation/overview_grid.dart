@@ -145,22 +145,26 @@ class OverviewGrid extends ConsumerWidget {
             onTap: () => _setGraduation(context, ref, graduation),
           ));
 
-    return LayoutBuilder(builder: (context, constraints) {
-      const gap = 8.0;
-      final width = (constraints.maxWidth - gap) / 2;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [
-          for (var i = 0; i < tiles.length; i++)
-            SizedBox(
-              // A leftover tile at the end spans the full width.
-              width: tiles.length.isOdd && i == tiles.length - 1 ? constraints.maxWidth : width,
-              child: tiles[i],
+    // Pairs of tiles; the two in a row share the taller one's height, so
+    // captions of different lengths don't leave the cards misaligned. A
+    // leftover tile at the end spans the full width.
+    const gap = 8.0;
+    return Column(
+      children: [
+        for (var i = 0; i < tiles.length; i += 2) ...[
+          if (i > 0) const SizedBox(height: gap),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: tiles[i]),
+                if (i + 1 < tiles.length) ...[const SizedBox(width: gap), Expanded(child: tiles[i + 1])],
+              ],
             ),
+          ),
         ],
-      );
-    });
+      ],
+    );
   }
 }
 

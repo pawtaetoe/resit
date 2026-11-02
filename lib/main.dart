@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
+import 'package:resit/features/home/presentation/home_screen.dart';
 import 'package:resit/features/services/presentation/services_screen.dart';
 import 'package:resit/features/settings/presentation/settings_screen.dart';
 
@@ -48,7 +49,8 @@ class MainLayout extends ConsumerStatefulWidget {
 }
 
 class _MainLayoutState extends ConsumerState<MainLayout> {
-  static const _screens = [ServicesScreen(), SettingsScreen()];
+  // In the order of [AppTab].
+  static const _screens = [HomeScreen(), ServicesScreen(), SettingsScreen()];
 
   // Coming back to the app re-checks the session (and signs back in if it
   // expired while the app was in the background).
@@ -89,6 +91,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
             label: 'Home',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.apps_outlined),
+            selectedIcon: Icon(Icons.apps),
+            label: 'Services',
           ),
           NavigationDestination(
             // A dot on the tab tells the user sign-in is needed.
