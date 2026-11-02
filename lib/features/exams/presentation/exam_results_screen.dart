@@ -26,6 +26,9 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
   bool _loading = false;
   MfaChallenge? _challenge;
 
+  /// A newer term skipped on opening because its results aren't out yet.
+  String? _skippedTerm;
+
   @override
   void initState() {
     super.initState();
@@ -71,11 +74,34 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
         return;
       }
       final current = _term;
-      final pick =
+      var pick =
           current == null ? terms.first : terms.firstWhere((t) => t.name == current.name, orElse: () => terms.first);
-      setState(() => _term = pick);
-      final results = await _withSession(() => service.results(pick, refresh: refresh, onMfaChallenge: _onChallenge));
-      if (mounted) setState(() => _results = results);
+      setState(() {
+        _term = pick;
+        _skippedTerm = null;
+      });
+      var results = await _withSession(() => service.results(pick, refresh: refresh, onMfaChallenge: _onChallenge));
+
+      // On opening, if the newest term isn't released yet, show the most
+      // recent term that is (looking back up to two terms).
+      if (current == null && results.notReleased) {
+        final skipped = pick.name;
+        for (final older in terms.skip(terms.indexOf(pick) + 1).take(2)) {
+          final r = await _withSession(() => service.results(older, onMfaChallenge: _onChallenge));
+          if (!r.notReleased) {
+            pick = older;
+            results = r;
+            if (mounted) setState(() => _skippedTerm = skipped);
+            break;
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _term = pick;
+          _results = results;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e);
     } finally {
@@ -176,9 +202,39 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
       return const MessageView(icon: Icons.grading_outlined, title: 'No results yet');
     }
 
+    if (results.notReleased) {
+      final terms = _terms ?? const <ExamTerm>[];
+      final i = terms.indexWhere((t) => t.name == results.term.name);
+      final previous = i >= 0 && i + 1 < terms.length ? terms[i + 1] : null;
+      return MessageView(
+        icon: Icons.hourglass_empty,
+        title: 'Not released yet',
+        message: 'Results for ${results.term.name} haven\'t been released. Check back after the release date.',
+        action: previous == null || _loading
+            ? null
+            : FilledButton.tonalIcon(
+                onPressed: () => _load(term: previous),
+                icon: const Icon(Icons.history),
+                label: Text('Show ${previous.name}'),
+              ),
+      );
+    }
+
     return Column(
       children: [
         SizedBox(height: 3, child: _loading ? const LinearProgressIndicator() : null),
+        if (_skippedTerm != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Card(
+              color: Theme.of(context).colorScheme.secondaryContainer,
+              child: ListTile(
+                leading: const Icon(Icons.hourglass_empty),
+                title: Text('Results for $_skippedTerm aren\'t out yet'),
+                subtitle: Text('Showing ${results.term.name}.'),
+              ),
+            ),
+          ),
         if (_error != null)
           MaterialBanner(
             content: Text("Couldn't refresh: ${friendlyError(_error!)}"),
@@ -367,9 +423,15 @@ class _CourseCard extends StatelessWidget {
                 height: 52,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-                child: Text(
-                  course.grade.isEmpty ? '–' : course.grade,
-                  style: theme.textTheme.titleMedium?.copyWith(color: fg, fontWeight: FontWeight.bold),
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                // A longer grade (e.g. "Pass") shrinks to fit on one line.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    course.grade.isEmpty ? '–' : course.grade,
+                    maxLines: 1,
+                    style: theme.textTheme.titleMedium?.copyWith(color: fg, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
             ),

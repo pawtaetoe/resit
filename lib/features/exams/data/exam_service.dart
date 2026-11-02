@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/network/peoplesoft.dart';
@@ -67,6 +68,10 @@ class ExamResults {
     this.note,
     this.pageText,
   });
+
+  /// in4SIT says this term's results haven't been released yet.
+  bool get notReleased =>
+      courses.isEmpty && RegExp(r'not (been |yet )?released', caseSensitive: false).hasMatch(pageText ?? '');
 
   String? value(String label) {
     for (final (l, v) in [...standing, ...details]) {
@@ -188,7 +193,7 @@ ExamResults parseExamResults(String body, ExamTerm term) {
   // "Label : value" rows, written as three <th> cells.
   final pairs = <(String, String)>[];
   for (final tr in doc.querySelectorAll('tr')) {
-    final th = tr.querySelectorAll('th');
+    final th = _cells(tr, 'th');
     if (th.length != 3 || cellText(th[1]) != ':') continue;
     final label = cellText(th[0]);
     final value = cellText(th[2]);
@@ -199,9 +204,9 @@ ExamResults parseExamResults(String body, ExamTerm term) {
   // The course table: a header row naming "Course Code".
   final courses = <CourseResult>[];
   for (final table in doc.querySelectorAll('table')) {
-    final rows = table.querySelectorAll('tr');
+    final rows = _ownRows(table);
     if (rows.isEmpty) continue;
-    final headers = rows.first.querySelectorAll('th').map((h) => cellText(h).toLowerCase()).toList();
+    final headers = _cells(rows.first, 'th').map((h) => cellText(h).toLowerCase()).toList();
     if (!headers.any((h) => h.contains('course code'))) continue;
 
     int col(String name) => headers.indexWhere((h) => h.contains(name));
@@ -211,7 +216,7 @@ ExamResults parseExamResults(String body, ExamTerm term) {
         .indexWhere((h) => h == 'grade' || (h.startsWith('grade') && !h.contains('point') && !h.contains('remark')));
 
     for (final tr in rows.skip(1)) {
-      final cells = tr.querySelectorAll('td').map(cellText).toList();
+      final cells = _cells(tr, 'td').map(cellText).toList();
       String at(int i) => i >= 0 && i < cells.length ? cells[i] : '';
       if (at(iCode).isEmpty) continue;
       courses.add(CourseResult(
@@ -246,4 +251,24 @@ ExamResults parseExamResults(String body, ExamTerm term) {
     note: note?.replaceFirst(RegExp(r'^\*\s*'), ''),
     pageText: courses.isEmpty ? cellText(doc.body ?? doc.documentElement!) : null,
   );
+}
+
+/// The table's own rows, not those of tables nested inside it. The slip sits
+/// inside PeopleSoft's layout tables, whose rows contain every other table.
+List<dom.Element> _ownRows(dom.Element table) => [
+      for (final tr in table.querySelectorAll('tr'))
+        if (_closestTable(tr) == table) tr
+    ];
+
+/// A row's own cells of [tag] (th or td), not those of nested tables.
+List<dom.Element> _cells(dom.Element tr, String tag) => [
+      for (final c in tr.children)
+        if (c.localName == tag) c
+    ];
+
+dom.Element? _closestTable(dom.Element el) {
+  for (var p = el.parent; p != null; p = p.parent) {
+    if (p.localName == 'table') return p;
+  }
+  return null;
 }

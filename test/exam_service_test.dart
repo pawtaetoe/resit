@@ -34,7 +34,9 @@ const _termList = r"""<?xml version='1.0' encoding='utf-8' ?>
 
 const _slip = r"""<?xml version='1.0' encoding='utf-8' ?>
 <PAGE id='N_RSLT_SLIP'><GENSCRIPT id='onloadScript'><![CDATA[oDoc.win0.ICStateNum.value=23;]]></GENSCRIPT>
-<FIELD id='win0divPSPAGECONTAINER'><![CDATA[
+<FIELD id='win0divPSPAGECONTAINER'><![CDATA[<table role='presentation' class='PSPAGECONTAINER'><tr><td></td><td>
+<DIV id='win0divN_RSLT_SLIP_WRK_GROUPBOX5'><table class='PSGROUPBOXWBO'><tr><td>
+<table role='presentation' class='PSGROUPBOX'><tr><td></td></tr><tr><td>
 <font color='#3366FF'><strong>Examination Result Slip</strong></font>
 <a name='N_RSLT_SLIP_WRK_VIEW_PB' id='N_RSLT_SLIP_WRK_VIEW_PB'>View Other Term</a>
 <table border='0'>
@@ -54,7 +56,8 @@ const _slip = r"""<?xml version='1.0' encoding='utf-8' ?>
 <tr><th>Academic Standing </th><th> : </th><th> - </th></tr>
 </table>
 <table border="1"><tbody><tr><td><p><strong>Letter Grade</strong></p></td><td><p><strong>Grade Point</strong></p></td></tr>
-<tr><td>A+</td><td>5.00</td></tr></tbody></table>
+<tr><td>A+</td><td>5.00</td></tr><tr><td>B+</td><td>4.00</td></tr></tbody></table>
+</td></tr></table></td></tr></table></DIV></td></tr></table>
 ]]></FIELD></PAGE>""";
 
 void main() {
@@ -83,6 +86,15 @@ void main() {
     expect(r.standing.map((p) => p.$1), ['Trimester GPA', 'Cumulative GPA', 'Academic Standing']);
     expect(r.note, startsWith('NOTE: For modules'));
     expect(r.pageText, isNull);
+  });
+
+  test('recognises a term whose results are not released yet', () {
+    const page = r"""<PAGE><FIELD id='x'><![CDATA[<strong>Examination Result Slip</strong>
+<a id='N_RSLT_SLIP_WRK_VIEW_PB'>View Other Term</a><div>Exam Results has not been released.</div>]]></FIELD></PAGE>""";
+    final r = parseExamResults(page, term);
+    expect(r.courses, isEmpty);
+    expect(r.notReleased, isTrue);
+    expect(parseExamResults(_slip, term).notReleased, isFalse);
   });
 
   test('opens the page, views the terms and picks one like the browser does', () async {
