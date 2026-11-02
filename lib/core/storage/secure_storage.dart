@@ -7,6 +7,7 @@ class SecureStorage {
   static const _keyUsername = 'rbs_username';
   static const _keyPassword = 'rbs_password';
   static const _keySession = 'rbs_session_cookies';
+  static const _keyTotp = 'mfa_totp_uri';
 
   final FlutterSecureStorage _store;
   Future<void>? _migration;
@@ -68,4 +69,12 @@ class SecureStorage {
     await _store.delete(key: _keyUsername);
     await _store.delete(key: _keyPassword);
   }
+
+  /// The authenticator setup link (otpauth://...) used to fill MFA
+  /// verification codes automatically.
+  Future<void> saveTotp(String otpauthUri) => _store.write(key: _keyTotp, value: otpauthUri);
+
+  Future<String?> getTotp() => _store.read(key: _keyTotp);
+
+  Future<void> clearTotp() => _store.delete(key: _keyTotp);
 }

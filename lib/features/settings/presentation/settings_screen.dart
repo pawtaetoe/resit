@@ -7,6 +7,7 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
+import 'package:resit/features/settings/presentation/totp_section.dart';
 
 /// Account tab: sign in with the SIT (ADFS) account, see the session status,
 /// sign out.
@@ -132,7 +133,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       message: "You'll need to approve the next sign-in in Microsoft Authenticator.",
       choices: const [
         SheetChoice('keep', 'Sign out', icon: Icons.logout, primary: true),
-        SheetChoice('forget', 'Sign out and forget my ID and password', icon: Icons.delete_outline, danger: true),
+        SheetChoice('forget', 'Sign out and forget my saved details', icon: Icons.delete_outline, danger: true),
         SheetChoice('stay', 'Stay signed in'),
       ],
     );
@@ -143,6 +144,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ref.read(authStateProvider.notifier).state = false;
     if (forget) {
       await ref.read(secureStorageProvider).clearCredentials();
+      await ref.read(secureStorageProvider).clearTotp();
+      ref.invalidate(totpConfigProvider);
       _usernameController.clear();
       _passwordController.clear();
       _hasSavedCredentials = false;
@@ -209,6 +212,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ],
                 const SizedBox(height: 24),
+                const TotpSection(),
+                const SizedBox(height: 16),
                 Row(
                   children: [
                     Icon(Icons.shield_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),

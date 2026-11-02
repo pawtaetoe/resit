@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:html/dom.dart' as dom;
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as parser;
+import 'package:resit/core/auth/totp.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 
@@ -13,7 +14,11 @@ class MfaChallenge {
   final String? number;
   final String message;
 
-  const MfaChallenge({this.number, required this.message});
+  /// True when the app is answering the challenge itself with a
+  /// verification code, so there's nothing to do on the phone.
+  final bool automatic;
+
+  const MfaChallenge({this.number, required this.message, this.automatic = false});
 }
 
 /// The saved session is gone and getting a new one needs credentials + MFA.
@@ -189,6 +194,9 @@ class AuthService {
     var url = startUrl;
     var page = startPage;
     String? announcedNumber;
+    final totp = await _loadTotp(log);
+    var codesSent = 0;
+    String? codeError;
 
     for (var step = 1;; step++) {
       final doc = parser.parse(page);
@@ -199,10 +207,63 @@ class AuthService {
 
       final action = form.attributes['action'];
       final target = (action == null || action.isEmpty) ? url : url.resolve(action);
-      final fields = _formFields(form);
+      // With a code secret saved, pick the verification-code method when
+      // the page offers a choice.
+      final fields = _formFields(form, preferCode: totp != null);
       final number = _extractMfaNumber(doc);
+      final codeInput = _findCodeInput(form);
 
-      if (step == 1) log('MFA page: ${_describeMfaPage(doc, fields)}');
+      if (step == 1 || codeInput != null) log('MFA page: ${_describeMfaPage(doc, fields)}');
+
+      // Verification-code page: answer it ourselves instead of waiting for
+      // a push approval.
+      if (codeInput != null) {
+        if (totp == null) {
+          throw MfaException('Sign-in is asking for a verification code. Set up automatic codes in '
+              'Account, or change your default sign-in method back to app notifications.');
+        }
+        if (codesSent >= 2) {
+          throw MfaException("The verification code wasn't accepted${codeError != null ? ' ($codeError)' : ''}. "
+              "Check the code secret in Account and that this phone's clock is set automatically.");
+        }
+        // A code about to expire may be stale by the time it arrives.
+        if (totp.secondsLeft(DateTime.now()) < 3) {
+          await Future<void>.delayed(Duration(seconds: totp.secondsLeft(DateTime.now()) + 1));
+        }
+        onChallenge?.call(const MfaChallenge(
+          message: 'Entering your verification code automatically…',
+          automatic: true,
+        ));
+        fields[codeInput] = totp.codeAt(DateTime.now());
+        codesSent++;
+        log('MFA: submitting verification code (attempt $codesSent) to ${target.path} '
+            'as "$codeInput", other fields=${fields.keys.where((k) => k != codeInput).join(", ")}');
+
+        final resp = await client.post(target, body: fields);
+        url = resp.request?.url ?? target;
+        page = resp.body;
+        if (_extractRelayForm(page, url) != null) {
+          log('MFA verification code accepted.');
+          return (page: page, url: url);
+        }
+        final nextDoc = parser.parse(page);
+        if (nextDoc.querySelector('input[type="password"]') != null) {
+          throw MfaException(_extractError(nextDoc) ?? 'ADFS rejected the sign-in and went back to the password page.');
+        }
+        final nextForm = _pickForm(nextDoc);
+        final error = _extractError(nextDoc);
+        // A rejected code usually re-shows the code box with an error; try
+        // once more with a fresh code, otherwise report the error.
+        if (error != null && (nextForm == null || _findCodeInput(nextForm) == null)) {
+          throw MfaException(error);
+        }
+        if (error != null) {
+          codeError = error;
+          log('MFA: code rejected: $error');
+        }
+        continue;
+      }
+
       if (step == 1 || number != announcedNumber) {
         announcedNumber = number;
         onChallenge?.call(MfaChallenge(
@@ -251,6 +312,33 @@ class AuthService {
     }
   }
 
+  Future<TotpConfig?> _loadTotp(void Function(String) log) async {
+    try {
+      final saved = await storage.getTotp();
+      if (saved == null || saved.isEmpty) return null;
+      return TotpConfig.parse(saved);
+    } catch (e) {
+      log('Saved verification code secret is unreadable: $e');
+      return null;
+    }
+  }
+
+  /// The name of the box on an MFA page that wants a one-time code, or null.
+  /// Matches by name/id/autocomplete since ADFS adapters name it differently
+  /// (e.g. VerificationCode, otc, Passcode).
+  String? _findCodeInput(dom.Element form) {
+    final pattern = RegExp(r'code|otp|otc|token|verification|passcode|pin', caseSensitive: false);
+    for (final input in form.querySelectorAll('input')) {
+      final name = input.attributes['name'];
+      if (name == null || name.isEmpty) continue;
+      final type = (input.attributes['type'] ?? 'text').toLowerCase();
+      if (!const {'text', 'tel', 'number', 'password'}.contains(type)) continue;
+      final hints = '${input.attributes['autocomplete'] ?? ''} $name ${input.attributes['id'] ?? ''}';
+      if (hints.contains('one-time-code') || pattern.hasMatch(hints)) return name;
+    }
+    return null;
+  }
+
   /// Debug summary of an MFA page: field values (Context is only measured)
   /// and the inline script that drives the page.
   String _describeMfaPage(dom.Document doc, Map<String, String> fields) {
@@ -264,7 +352,21 @@ class AuthService {
         .map((t) => t.substring(0, t.length.clamp(0, 700)))
         .take(2)
         .join(' || ');
-    return 'fields: $values | script: $scripts';
+    final inputs = doc
+        .querySelectorAll('input')
+        .where((i) => (i.attributes['type'] ?? 'text').toLowerCase() != 'hidden')
+        .map((i) => '${i.attributes['name'] ?? i.attributes['id'] ?? '?'}(${i.attributes['type'] ?? 'text'}'
+            '${i.attributes['autocomplete'] != null ? ',${i.attributes['autocomplete']}' : ''})')
+        .join(' ');
+    final choices = doc
+        .querySelectorAll('a, button, label')
+        .map((e) => e.text.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((t) => RegExp(r'another way|other|code|verification|authenticator|text|call', caseSensitive: false)
+            .hasMatch(t))
+        .where((t) => t.length < 80)
+        .take(6)
+        .join(' / ');
+    return 'fields: $values | inputs: $inputs | choices: $choices | script: $scripts';
   }
 
   // ---------------------------------------------------------------------------
@@ -567,7 +669,7 @@ class AuthService {
   /// Collects what a browser would submit for [form]: hidden/text inputs,
   /// checked boxes/radios, the Authenticator-ish radio if none is checked, and
   /// the first named submit button.
-  Map<String, String> _formFields(dom.Element form) {
+  Map<String, String> _formFields(dom.Element form, {bool preferCode = false}) {
     final fields = <String, String>{};
     final radios = <String, List<dom.Element>>{};
     String? submitName;
@@ -603,11 +705,15 @@ class AuthService {
               r'authenticator|notification|approve|push',
               caseSensitive: false)
           .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));
-      final pick = checked.isNotEmpty
-          ? checked.first
-          : preferred.isNotEmpty
-              ? preferred.first
-              : group.first;
+      final codeOption = group.where((r) => RegExp(r'code|otp|otc|verification|token|passcode', caseSensitive: false)
+          .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));
+      final pick = preferCode && codeOption.isNotEmpty
+          ? codeOption.first
+          : checked.isNotEmpty
+              ? checked.first
+              : preferred.isNotEmpty
+                  ? preferred.first
+                  : group.first;
       fields[name] = pick.attributes['value'] ?? '';
     });
 
