@@ -24,7 +24,7 @@ class DashboardScreen extends StatelessWidget {
 /// Booking hours offered by RBS, in minutes since midnight.
 const _openMin = 7 * 60;
 const _closeMin = 22 * 60;
-const _durations = [30, 60, 90, 120, 180];
+const _durations = [30, 60, 90, 120, 180, 240];
 const _daysAhead = 14;
 
 String _hhmm(int minutes) =>
@@ -362,17 +362,28 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   Widget _buildDurationPicker(int? maxLeft) {
     // Lengths past closing time or beyond the weekly hours left can't be picked.
     final valid = _validDurations().where((d) => maxLeft == null || d <= maxLeft).toList();
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final d in _durations)
-          ChoiceChip(
-            label: Text(_durationLabel(d)),
-            selected: d == _duration,
-            onSelected: !_searching && valid.contains(d) ? (_) => _changeSearch(() => _duration = d) : null,
-          ),
-      ],
+    // One row of equal segments so every length is visible at a glance.
+    return SizedBox(
+      width: double.infinity,
+      child: SegmentedButton<int>(
+        showSelectedIcon: false,
+        style: SegmentedButton.styleFrom(
+          minimumSize: const Size(0, 48),
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+        ),
+        segments: [
+          for (final d in _durations)
+            ButtonSegment(
+              value: d,
+              enabled: !_searching && valid.contains(d),
+              label: Text(_durationLabel(d).replaceAll(' min', 'm').replaceAll(' h', 'h'),
+                  semanticsLabel: _durationLabel(d)),
+            ),
+        ],
+        selected: {_duration},
+        onSelectionChanged: (s) => _changeSearch(() => _duration = s.first),
+      ),
     );
   }
 
