@@ -200,10 +200,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ],
                 ),
-                if (session.log.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _LogPanel(log: session.log.join('\n')),
-                ],
+                // Every sign-in's steps (including the timetable's), for
+                // troubleshooting.
+                ValueListenableBuilder<List<String>>(
+                  valueListenable: ref.watch(authServiceProvider).signInLog,
+                  builder: (context, log, _) => log.isEmpty
+                      ? const SizedBox.shrink()
+                      : Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: _LogPanel(log: log.join('\n')),
+                        ),
+                ),
               ],
             ),
           ),

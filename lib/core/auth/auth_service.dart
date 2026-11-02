@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:html/dom.dart' as dom;
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as parser;
@@ -81,6 +83,20 @@ class AuthService {
   Timer? _keepAliveTimer;
   Future<bool>? _resuming;
 
+  /// Recent sign-in steps from every sign-in (Account, automatic, and other
+  /// apps' single sign-on such as the timetable), shown in Account → Sign-in
+  /// details for troubleshooting. Page structure and field names only, never
+  /// the password.
+  final signInLog = ValueNotifier<List<String>>(const []);
+
+  void _record(String message) {
+    final t = DateTime.now();
+    final stamp = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:'
+        '${t.second.toString().padLeft(2, '0')}';
+    final next = [...signInLog.value, '$stamp $message'];
+    signInLog.value = next.length > 300 ? next.sublist(next.length - 300) : next;
+  }
+
   /// Called whenever the session flips between signed-in and signed-out.
   void Function(bool active)? onSessionChanged;
 
@@ -102,6 +118,7 @@ class AuthService {
   }) async {
     void log(String message) {
       debugLog(message);
+      _record(message);
       onLog?.call(message);
     }
 
@@ -490,7 +507,8 @@ class AuthService {
       if (relay == null && !signedIn && landed.host != url.host) {
         debugLog('SSO: no relay form on ${landed.host}${landed.path} (status ${response.statusCode}). '
             'Cookies sent there: ${client.cookieNamesFor(landed)}');
-        debugLog('SSO: page was: ${describeHtmlPage(response.body)}');
+        _record('SSO to ${url.host}: landed on ${landed.host}${landed.path} without a relay form.');
+        _record('SSO page: ${describeHtmlPage(response.body)}');
 
         signedIn = true;
         relay = await _signInAtAdfs(
@@ -498,6 +516,7 @@ class AuthService {
           response.body,
           log: (m) {
             debugLog(m);
+            _record(m);
             onLog?.call(m);
           },
           onMfaChallenge: onMfaChallenge,
@@ -605,6 +624,7 @@ class AuthService {
   }
 
   void dispose() {
+    signInLog.dispose();
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
   }
