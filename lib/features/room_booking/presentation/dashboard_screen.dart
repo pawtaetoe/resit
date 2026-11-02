@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -84,6 +86,13 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   bool _searching = false;
   List<RoomWithSlots>? _rooms;
+
+  /// Progress of the per-room search, and rooms that couldn't be checked.
+  int _checked = 0;
+  int _total = 0;
+  List<Room> _failed = [];
+  Object? _firstFailure;
+  StreamSubscription<RoomCheck>? _searchSub;
   String? _error;
   bool _errorIsSession = false;
   String _filter = '';
@@ -148,38 +157,88 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       }
       final valid = _validDurations();
       if (!valid.contains(_duration)) _duration = valid.isEmpty ? 30 : valid.last;
+      _searchSub?.cancel();
+      _searching = false;
       _rooms = null;
+      _failed = [];
       _error = null;
     });
   }
 
-  Future<void> _search() async {
+  @override
+  void dispose() {
+    _searchSub?.cancel();
+    super.dispose();
+  }
+
+  /// Checks rooms one per request, several at once, and lists each free
+  /// room as soon as its answer arrives. With [only], re-checks just those
+  /// rooms (the ones that failed) and keeps the results found so far.
+  Future<void> _search({List<Room>? only}) async {
+    await _searchSub?.cancel();
     setState(() {
       _searching = true;
       _error = null;
-      _rooms = null;
-      _filter = '';
+      _firstFailure = null;
+      if (only == null) {
+        _rooms = [];
+        _failed = [];
+        _filter = '';
+        _checked = 0;
+        _total = 0;
+      } else {
+        _failed = [];
+        _checked = 0;
+        _total = only.length;
+      }
     });
 
     try {
       final service = ref.read(bookingServiceProvider);
-      final rooms = await service.getRooms();
-      final info = await service.checkAvailability(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin));
+      final rooms = only ?? await service.getRooms();
+      if (!mounted) return;
+      setState(() => _total = rooms.length);
+      if (only == null) _revealResults();
 
-      final free = <RoomWithSlots>[];
-      for (final rm in info) {
-        final picks = slotsInRange(rm.slots, _startMin, _endMin);
-        if (picks.isNotEmpty) free.add(RoomWithSlots(rm.room, picks));
-      }
-      if (mounted) {
-        setState(() => _rooms = free);
-        _revealResults();
+      // Fixed now, so late answers are matched against the slot that was
+      // searched even if the form changes meanwhile.
+      final start = _startMin;
+      final end = _endMin;
+      final done = Completer<void>();
+
+      _searchSub = service.checkEachRoom(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin)).listen(
+        (check) {
+          if (!mounted) return;
+          setState(() {
+            _checked++;
+            if (check.error != null) {
+              _failed.add(check.room);
+              _firstFailure ??= check.error;
+            } else if (check.result != null) {
+              final picks = slotsInRange(check.result!.slots, start, end);
+              if (picks.isNotEmpty) _rooms?.add(RoomWithSlots(check.room, picks));
+            }
+          });
+        },
+        onError: (Object e) {
+          if (!done.isCompleted) done.completeError(e);
+        },
+        onDone: () {
+          if (!done.isCompleted) done.complete();
+        },
+      );
+      await done.future;
+
+      // Every room failed: show it as an error rather than "no rooms free".
+      if (mounted && _total > 0 && _failed.length == _total && (_rooms?.isEmpty ?? true)) {
+        throw _firstFailure ?? Exception("Couldn't check any rooms.");
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _error = friendlyError(e);
           _errorIsSession = isSessionError(e);
+          _failed = [];
         });
         _revealResults();
       }
@@ -288,7 +347,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
               busy: _searching,
               icon: Icons.search,
               label: 'Find free rooms',
-              busyLabel: 'Checking rooms…',
+              busyLabel: _total == 0 ? 'Checking rooms…' : 'Checking rooms… $_checked/$_total',
             ),
           ],
         ),
@@ -395,18 +454,57 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           title: _errorIsSession ? "Couldn't sign you in" : "Couldn't load rooms",
           message: _error,
           action: FilledButton.icon(
-                  onPressed: _search,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
-                ),
+            onPressed: _search,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Try again'),
+          ),
         ),
       ];
     }
 
     final rooms = _rooms;
     if (rooms == null) return [];
+    final theme = Theme.of(context);
+
+    // While checking: progress, with free rooms listed below as they arrive.
+    final progress = _searching
+        ? <Widget>[
+            Text(
+              _total == 0 ? 'Getting the room list…' : 'Checked $_checked of $_total rooms…',
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(value: _total == 0 ? null : _checked / _total),
+            ),
+            const SizedBox(height: 16),
+          ]
+        : const <Widget>[];
+
+    // Rooms that couldn't be checked even after a retry.
+    final failedNote = !_searching && _failed.isNotEmpty
+        ? <Widget>[
+            Card(
+              color: theme.colorScheme.errorContainer,
+              child: ListTile(
+                leading: Icon(Icons.warning_amber_rounded, color: theme.colorScheme.onErrorContainer),
+                title: Text(
+                  "${_failed.length} ${_failed.length == 1 ? 'room' : 'rooms'} couldn't be checked",
+                  style: TextStyle(color: theme.colorScheme.onErrorContainer),
+                ),
+                trailing: TextButton(
+                  onPressed: () => _search(only: List.of(_failed)),
+                  child: const Text('Check again'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ]
+        : const <Widget>[];
 
     if (rooms.isEmpty) {
+      if (_searching || _failed.isNotEmpty) return [...progress, ...failedNote];
       return [
         const MessageView(
           icon: Icons.meeting_room_outlined,
@@ -425,11 +523,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
         : rooms.where((r) => '${r.room.rsrcName} ${r.room.rsrcTypName}'.toLowerCase().contains(q)).toList())
       // Rooms you can still book come first.
       ..sort((a, b) => (fits(a) ? 0 : 1).compareTo(fits(b) ? 0 : 1));
-    final theme = Theme.of(context);
-
     return [
+      ...progress,
+      ...failedNote,
       Text(
-        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free',
+        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free${_searching ? ' so far' : ''}',
         style: theme.textTheme.titleMedium,
       ),
       const SizedBox(height: 8),

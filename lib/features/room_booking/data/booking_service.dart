@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/auth/auth_service.dart';
@@ -9,7 +10,7 @@ class BookingService {
 
   static const String base = "https://rbs.singaporetech.edu.sg";
   static const Set<String> roomTypes = {"Discussion Room", "Meeting Room"};
-  
+
   List<Room>? _cachedRooms;
 
   BookingService(this.client, this.auth);
@@ -56,7 +57,7 @@ class BookingService {
 
     final List<dynamic> jsonList = jsonDecode(response.body);
     final allRooms = jsonList.map((e) => Room.fromJson(e)).toList();
-    
+
     final filtered = allRooms.where((r) => roomTypes.contains(r.rsrcTypName)).toList();
     if (search.isEmpty) {
       _cachedRooms = filtered;
@@ -64,24 +65,27 @@ class BookingService {
     return filtered;
   }
 
-  Future<List<RoomWithSlots>> checkAvailability(
-      List<Room> rooms, String date, String startTime, String endTime) async {
+  Future<List<RoomWithSlots>> checkAvailability(List<Room> rooms, String date, String startTime, String endTime) async {
     final csrfToken = await auth.getCsrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
-    final resourceList = rooms.map((r) => {
-      "RSRC_ID": r.rsrcId,
-      "IS_SLD": r.isSld,
-      "Event_Type": r.eventType,
-      "Disclaimer": r.disclaimer,
-    }).toList();
+    final resourceList = rooms
+        .map((r) => {
+              "RSRC_ID": r.rsrcId,
+              "IS_SLD": r.isSld,
+              "Event_Type": r.eventType,
+              "Disclaimer": r.disclaimer,
+            })
+        .toList();
 
-    final parameter = [{
-      "MRB002Date": date, // e.g. "18 May 2026"
-      "MRB002StartTime": startTime, // e.g. "00:00"
-      "MRB002EndTime": endTime, // e.g. "23:59"
-      "ResourceList": resourceList,
-    }];
+    final parameter = [
+      {
+        "MRB002Date": date, // e.g. "18 May 2026"
+        "MRB002StartTime": startTime, // e.g. "00:00"
+        "MRB002EndTime": endTime, // e.g. "23:59"
+        "ResourceList": resourceList,
+      }
+    ];
 
     final data = {
       "__RequestVerificationToken": csrfToken,
@@ -109,17 +113,81 @@ class BookingService {
     return _parseReloadHtml(response.body, rooms);
   }
 
+  /// Checks every room separately, [parallel] at a time, and reports each
+  /// room as soon as its answer arrives. One room per request keeps every
+  /// request well under the server's cap of 10 rooms (a single request for
+  /// all rooms silently drops the rest), and running a few at once makes the
+  /// whole search much faster than one big request. A room that fails is
+  /// retried once; if it fails again it's reported with its error, so one
+  /// slow room doesn't sink the search.
+  Stream<RoomCheck> checkEachRoom(
+    List<Room> rooms,
+    String date,
+    String startTime,
+    String endTime, {
+    int parallel = 6,
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    late final StreamController<RoomCheck> controller;
+    var cancelled = false;
+    var next = 0;
+
+    Future<RoomWithSlots?> checkOne(Room room) async {
+      for (var attempt = 1;; attempt++) {
+        try {
+          final result = await checkAvailability([room], date, startTime, endTime).timeout(timeout);
+          return result.isEmpty ? null : result.first;
+        } catch (e) {
+          if (attempt >= 2 || cancelled) rethrow;
+        }
+      }
+    }
+
+    Future<void> worker() async {
+      while (!cancelled && next < rooms.length) {
+        final room = rooms[next++];
+        try {
+          final result = await checkOne(room);
+          if (!cancelled) controller.add(RoomCheck(room, result: result));
+        } catch (e) {
+          if (!cancelled) controller.add(RoomCheck(room, error: e));
+        }
+      }
+    }
+
+    Future<void> run() async {
+      try {
+        // Validate the session once up front, so the parallel requests don't
+        // each re-check it at the same moment.
+        final token = await auth.getCsrfToken();
+        if (token == null) throw Exception("Could not get CSRF token.");
+        await Future.wait([for (var i = 0; i < parallel && i < rooms.length; i++) worker()]);
+      } catch (e, st) {
+        if (!cancelled) controller.addError(e, st);
+      } finally {
+        await controller.close();
+      }
+    }
+
+    controller = StreamController<RoomCheck>(
+      onListen: run,
+      onCancel: () => cancelled = true,
+    );
+    return controller.stream;
+  }
+
   List<RoomWithSlots> _parseReloadHtml(String htmlText, List<Room> originalRooms) {
     final slotDivRe = RegExp(r'<div\s+([^>]*?data-rsrcid=[^>]*?)>\s*([^<]*?)\s*<', caseSensitive: false);
-    final dataAttrRe = RegExp(r"data-([a-z]+)=(?:'([^']*)'|&quot;([^&]*)&quot;|\x22([^\x22]*)\x22|([^\s>]+))", caseSensitive: false);
+    final dataAttrRe =
+        RegExp(r"data-([a-z]+)=(?:'([^']*)'|&quot;([^&]*)&quot;|\x22([^\x22]*)\x22|([^\s>]+))", caseSensitive: false);
 
-    Map<String, Room> roomMap = { for (var r in originalRooms) r.rsrcId : r };
+    Map<String, Room> roomMap = {for (var r in originalRooms) r.rsrcId: r};
     Map<String, List<RoomSlot>> slotsMap = {};
 
     for (final match in slotDivRe.allMatches(htmlText)) {
       final attrStr = match.group(1) ?? "";
       final label = match.group(2)?.trim() ?? "";
-      
+
       Map<String, String> attrs = {};
       for (final attrMatch in dataAttrRe.allMatches(attrStr)) {
         final key = attrMatch.group(1)?.toLowerCase() ?? "";
@@ -333,9 +401,8 @@ class BookingService {
         }
 
         final payload = jsonDecode(response.body);
-        final isSuccess = payload['result'] == 'success' || 
-                          payload['status'] == 'success' || 
-                          payload['success'] == true;
+        final isSuccess =
+            payload['result'] == 'success' || payload['status'] == 'success' || payload['success'] == true;
         if (!isSuccess) {
           throw Exception(payload['message'] ?? payload['error'] ?? response.body);
         }
