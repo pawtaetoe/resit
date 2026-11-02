@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
+import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
@@ -53,6 +54,13 @@ class ServicesScreen extends StatelessWidget {
               title: 'Exam results',
               subtitle: 'Grades and GPA for each term',
               onTap: () => _open(context, const ExamResultsScreen()),
+            ),
+            const SizedBox(height: 8),
+            _TaskTile(
+              icon: Icons.insights_outlined,
+              title: 'Academic progress',
+              subtitle: 'Charts of your GPA, credits and grades',
+              onTap: () => _open(context, const AcademicProgressScreen()),
             ),
             const SizedBox(height: 8),
             _TaskTile(

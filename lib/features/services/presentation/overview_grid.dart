@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
-import 'package:resit/features/exams/presentation/exam_results_screen.dart';
+import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The Home dashboard: countdowns from SIT's academic calendar, credits and
@@ -41,7 +41,7 @@ class OverviewGrid extends ConsumerWidget {
     final graduation = ref.watch(graduationDateProvider).valueOrNull;
     final d = DateFormat('d MMM');
     void openCalendar() => _open(context, const AcademicCalendarScreen());
-    void openResults() => _open(context, const ExamResultsScreen());
+    void openProgress() => _open(context, const AcademicProgressScreen());
 
     final tiles = <Widget>[];
 
@@ -115,7 +115,7 @@ class OverviewGrid extends ConsumerWidget {
         value: n(record.creditsEarned),
         caption: 'credits earned'
             '${record.creditsInProgress > 0 ? ' · ${n(record.creditsInProgress)} in progress' : ''}',
-        onTap: openResults,
+        onTap: openProgress,
       ));
       if (record.cumulativeGpa != null) {
         tiles.add(_Tile(
@@ -123,7 +123,7 @@ class OverviewGrid extends ConsumerWidget {
           value: record.cumulativeGpa!,
           caption: 'cumulative GPA'
               '${record.latestTermGpa != null ? ' · last term ${record.latestTermGpa}' : ''}',
-          onTap: openResults,
+          onTap: openProgress,
         ));
       }
     } else if (signedIn && recordAsync.isLoading) {

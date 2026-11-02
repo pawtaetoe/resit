@@ -14,6 +14,12 @@ CourseResult _c(String code, String credits, String grade) =>
     CourseResult(code: code, title: code, credits: credits, grade: grade);
 
 void main() {
+  test('short term labels', () {
+    expect(shortTermLabel('AY 2025/26 Trimester 3'), 'T3 25/26');
+    expect(shortTermLabel('2026/27 Trimester 1'), 'T1 26/27');
+    expect(shortTermLabel('Something else'), 'Something else');
+  });
+
   test('passing grades', () {
     for (final g in ['A+', 'A', 'A-', 'B+', 'C', 'D+', 'D', 'Pass', 'EX', 'TC']) {
       expect(isPassingGrade(g), isTrue, reason: g);
@@ -38,7 +44,16 @@ void main() {
     expect(record.latestTermGpa, '4.20');
     expect(record.programme, 'BSc (Hons) Computing Science');
 
+    expect(record.terms.map((x) => x.label), ['T1 25/26', 'T2 25/26'], reason: 'oldest first');
+    expect(record.terms.last.termGpa, 4.20);
+    expect(record.terms.last.cumulativeGpa, 4.41);
+    expect(record.terms.last.creditsEarned, 10.5, reason: 'CSC1106 6 + INF1004 4.5 graded on the newer slip');
+    expect(record.terms.first.creditsEarned, 6, reason: 'CSC1108 only; CSC1106 counts on its newest slip');
+    expect(record.gradeCounts, {'B+': 1, 'A-': 1, 'F': 1, 'B': 1});
+
     final back = AcademicRecord.fromJson(record.toJson());
+    expect(back.terms.map((x) => x.label), ['T1 25/26', 'T2 25/26']);
+    expect(back.gradeCounts['F'], 1);
     expect(back.creditsEarned, 16.5);
     expect(back.cumulativeGpa, '4.41');
   });

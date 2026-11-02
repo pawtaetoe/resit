@@ -23,7 +23,15 @@ class HomeScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
           children: [
-            Text('reSIT', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
+            // The wordmark's colours, as in the logo: "re" teal, "SIT" navy.
+            Text.rich(
+              TextSpan(children: [
+                TextSpan(text: 're', style: TextStyle(color: theme.colorScheme.secondary)),
+                TextSpan(text: 'SIT', style: TextStyle(color: theme.colorScheme.primary)),
+              ]),
+              style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+              semanticsLabel: 'reSIT',
+            ),
             const SizedBox(height: 4),
             Text(
               'Rooms, classes and results at SIT, in one place.',
