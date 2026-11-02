@@ -1,342 +1,513 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:resit/core/providers.dart';
-import 'package:resit/features/room_booking/data/models.dart';
 import 'package:intl/intl.dart';
+import 'package:resit/core/providers.dart';
+import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
+import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 
-class DashboardScreen extends ConsumerStatefulWidget {
+/// Book a room: pick a day, a start time and a length, then choose from the
+/// rooms free for the whole slot.
+class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
-  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+  Widget build(BuildContext context) {
+    return AuthGate(title: 'Book a room', builder: (_) => const _BookRoomView());
+  }
 }
 
-class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  DateTime _selectedDate = DateTime.now();
-  TimeOfDay _startTime = const TimeOfDay(hour: 13, minute: 0);
-  TimeOfDay _endTime = const TimeOfDay(hour: 15, minute: 0);
-  
-  bool _isLoading = false;
-  bool _isAutoLoggingIn = false;
-  List<RoomWithSlots>? _availableRooms;
-  String? _errorMessage;
+/// Booking hours offered by RBS, in minutes since midnight.
+const _openMin = 7 * 60;
+const _closeMin = 22 * 60;
+const _durations = [30, 60, 90, 120, 180];
+const _daysAhead = 14;
+
+String _hhmm(int minutes) =>
+    '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
+
+String _durationLabel(int minutes) {
+  if (minutes < 60) return '$minutes min';
+  final h = minutes / 60;
+  return h == h.roundToDouble() ? '${h.round()} h' : '${h.toStringAsFixed(1)} h';
+}
+
+int _toMin(String time) {
+  final parts = time.trim().split(':');
+  return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+}
+
+/// Returns the slots covering the whole requested range, or an empty list if
+/// any part of it is taken or missing. E.g. 13:00-14:00 needs both
+/// 13:00-13:30 and 13:30-14:00 to be available.
+List<RoomSlot> slotsInRange(List<RoomSlot> slots, int lo, int hi) {
+  if (hi <= lo) return [];
+
+  final inRange = <({RoomSlot slot, int start, int end})>[];
+  for (final sl in slots) {
+    try {
+      final parts = sl.label.split('-');
+      final s = _toMin(parts[0]);
+      final e = _toMin(parts[1]);
+      if (s >= lo && e <= hi) inRange.add((slot: sl, start: s, end: e));
+    } catch (_) {
+      // ignore malformed labels
+    }
+  }
+  inRange.sort((a, b) => a.start.compareTo(b.start));
+
+  // Slots must be available and run back-to-back from lo to hi.
+  var cursor = lo;
+  for (final s in inRange) {
+    if (!s.slot.available || s.start != cursor) return [];
+    cursor = s.end;
+  }
+  if (cursor != hi) return [];
+  return inRange.map((s) => s.slot).toList();
+}
+
+class _BookRoomView extends ConsumerStatefulWidget {
+  const _BookRoomView();
+
+  @override
+  ConsumerState<_BookRoomView> createState() => _BookRoomViewState();
+}
+
+class _BookRoomViewState extends ConsumerState<_BookRoomView> {
+  late DateTime _date;
+  late int _startMin;
+  int _duration = 120;
+
+  bool _searching = false;
+  List<RoomWithSlots>? _rooms;
+  String? _error;
+  bool _errorIsSession = false;
+  String _filter = '';
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!ref.read(authStateProvider)) {
-        _attemptAutoLogin();
+    final today = _today();
+    final earliest = _earliestStart(today);
+    if (earliest == null) {
+      // Too late to book today: start on tomorrow.
+      _date = today.add(const Duration(days: 1));
+      _startMin = 9 * 60;
+    } else {
+      _date = today;
+      _startMin = earliest < 13 * 60 ? 13 * 60 : earliest;
+    }
+    _duration = _validDurations().contains(120) ? 120 : _validDurations().last;
+  }
+
+  DateTime _today() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
+  bool _isToday(DateTime d) => d == _today();
+
+  /// First bookable half hour on [day], or null if none are left.
+  int? _earliestStart(DateTime day) {
+    var earliest = _openMin;
+    if (_isToday(day)) {
+      final now = DateTime.now();
+      final nowMin = now.hour * 60 + now.minute;
+      earliest = ((nowMin + 29) ~/ 30) * 30; // round up to the next half hour
+      if (earliest < _openMin) earliest = _openMin;
+    }
+    return earliest <= _closeMin - 30 ? earliest : null;
+  }
+
+  List<int> _startOptions() {
+    final first = _earliestStart(_date);
+    if (first == null) return [];
+    return [for (var m = first; m <= _closeMin - 30; m += 30) m];
+  }
+
+  List<int> _validDurations() => _durations.where((d) => _startMin + d <= _closeMin).toList();
+
+  int get _endMin => _startMin + _duration;
+
+  String get _apiDate => DateFormat('d MMM yyyy').format(_date);
+
+  String get _slotSummary =>
+      '${DateFormat('EEE d MMM').format(_date)} · ${_hhmm(_startMin)} – ${_hhmm(_endMin)}';
+
+  /// Any change to the search makes old results misleading, so clear them.
+  void _changeSearch(VoidCallback change) {
+    setState(() {
+      change();
+      final starts = _startOptions();
+      if (starts.isNotEmpty && !starts.contains(_startMin)) {
+        _startMin = starts.firstWhere((m) => m >= _startMin, orElse: () => starts.last);
       }
+      final valid = _validDurations();
+      if (!valid.contains(_duration)) _duration = valid.isEmpty ? 30 : valid.last;
+      _rooms = null;
+      _error = null;
     });
   }
 
-  Future<void> _attemptAutoLogin() async {
-    setState(() => _isAutoLoggingIn = true);
-    try {
-      // A fresh login needs MFA approval, so only reuse the saved session
-      // here. If it has lapsed the user reconnects from Settings.
-      await ref.read(authServiceProvider).resumeSession();
-    } catch (e) {
-      // Auto login failed silently
-    } finally {
-      if (mounted) {
-        setState(() => _isAutoLoggingIn = false);
-      }
-    }
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 14)),
-    );
-    if (picked != null && picked != _selectedDate) {
-      setState(() {
-        _selectedDate = picked;
-        _availableRooms = null;
-      });
-    }
-  }
-
-  TimeOfDay _snapTime(TimeOfDay time) {
-    if (time.minute < 15) return TimeOfDay(hour: time.hour, minute: 0);
-    if (time.minute < 45) return TimeOfDay(hour: time.hour, minute: 30);
-    return TimeOfDay(hour: (time.hour + 1) % 24, minute: 0);
-  }
-
-  Future<void> _selectStartTime(BuildContext context) async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: _startTime,
-    );
-    if (picked != null) {
-      final snapped = _snapTime(picked);
-      if (snapped != _startTime) {
-        setState(() {
-          _startTime = snapped;
-          _availableRooms = null;
-        });
-        if (snapped.minute != picked.minute && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Time rounded to nearest 30 mins')));
-        }
-      }
-    }
-  }
-
-  Future<void> _selectEndTime(BuildContext context) async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: _endTime,
-    );
-    if (picked != null) {
-      final snapped = _snapTime(picked);
-      if (snapped != _endTime) {
-        setState(() {
-          _endTime = snapped;
-          _availableRooms = null;
-        });
-        if (snapped.minute != picked.minute && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Time rounded to nearest 30 mins')));
-        }
-      }
-    }
-  }
-
-  String _formatTime(TimeOfDay time) {
-    final h = time.hour.toString().padLeft(2, '0');
-    final m = time.minute.toString().padLeft(2, '0');
-    return "$h:$m";
-  }
-
-  int _toMin(String time) {
-    final parts = time.split(":");
-    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-  }
-
-  /// Returns the slots covering the whole requested range, or an empty list
-  /// if any part of it is taken or missing. E.g. 13:00-14:00 needs both
-  /// 13:00-13:30 and 13:30-14:00 to be available.
-  List<RoomSlot> _slotsInRange(List<RoomSlot> slots, String rangeStr) {
-    final parts = rangeStr.split("-");
-    final lo = _toMin(parts[0]);
-    final hi = _toMin(parts[1]);
-    if (hi <= lo) return [];
-
-    final inRange = <({RoomSlot slot, int start, int end})>[];
-    for (var sl in slots) {
-      try {
-        final lblParts = sl.label.split("-");
-        final sMin = _toMin(lblParts[0]);
-        final eMin = _toMin(lblParts[1]);
-        if (sMin >= lo && eMin <= hi) {
-          inRange.add((slot: sl, start: sMin, end: eMin));
-        }
-      } catch (e) {
-        // ignore malformed labels
-      }
-    }
-    inRange.sort((a, b) => a.start.compareTo(b.start));
-
-    // Slots must be available and run back-to-back from lo to hi.
-    var cursor = lo;
-    for (final s in inRange) {
-      if (!s.slot.available || s.start != cursor) return [];
-      cursor = s.end;
-    }
-    if (cursor != hi) return [];
-
-    return inRange.map((s) => s.slot).toList();
-  }
-
-  Future<void> _fetchRooms() async {
+  Future<void> _search() async {
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-      _availableRooms = null;
+      _searching = true;
+      _error = null;
+      _rooms = null;
+      _filter = '';
     });
 
     try {
       final service = ref.read(bookingServiceProvider);
       final rooms = await service.getRooms();
-      
-      final dateStr = DateFormat('d MMM yyyy').format(_selectedDate); // e.g. 18 May 2026
-      
-      final info = await service.checkAvailability(rooms, dateStr, "07:00", "22:00");
-      
-      final timeRangeStr = "${_formatTime(_startTime)}-${_formatTime(_endTime)}";
-      
-      // Filter slots by requested time range
-      List<RoomWithSlots> validRooms = [];
-      for (var rm in info) {
-        final picks = _slotsInRange(rm.slots, timeRangeStr);
-        if (picks.isNotEmpty) {
-          validRooms.add(RoomWithSlots(rm.room, picks));
-        }
-      }
+      final info = await service.checkAvailability(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin));
 
-      setState(() {
-        _availableRooms = validRooms;
-      });
+      final free = <RoomWithSlots>[];
+      for (final rm in info) {
+        final picks = slotsInRange(rm.slots, _startMin, _endMin);
+        if (picks.isNotEmpty) free.add(RoomWithSlots(rm.room, picks));
+      }
+      if (mounted) setState(() => _rooms = free);
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _error = friendlyError(e);
+          _errorIsSession = isSessionError(e);
+        });
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _searching = false);
     }
   }
 
-  Future<void> _bookRoom(RoomWithSlots roomWithSlots) async {
+  Future<void> _book(RoomWithSlots room) async {
+    final summary = _slotSummary;
+    final booked = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _ConfirmBookingSheet(room: room, date: _apiDate, slotSummary: summary),
+    );
+    if (booked != true || !mounted) return;
+
+    setState(() => _rooms?.remove(room));
+    showSuccess(
+      context,
+      'Booked ${room.room.rsrcName} for $summary.',
+      action: SnackBarAction(
+        label: 'My bookings',
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ManageBookingScreen()),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Book a room')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+        children: [
+          _label(context, 'Day'),
+          _buildDayPicker(),
+          const SizedBox(height: 20),
+          _label(context, 'Start time'),
+          _buildStartPicker(),
+          const SizedBox(height: 20),
+          _label(context, 'How long'),
+          _buildDurationPicker(),
+          const SizedBox(height: 20),
+          Card(
+            color: theme.colorScheme.secondaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(Icons.schedule, color: theme.colorScheme.onSecondaryContainer),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _slotSummary,
+                      style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.onSecondaryContainer),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          BusyButton(
+            onPressed: _startOptions().isEmpty ? null : _search,
+            busy: _searching,
+            icon: Icons.search,
+            label: 'Find free rooms',
+            busyLabel: 'Checking rooms…',
+          ),
+          const SizedBox(height: 24),
+          ..._buildResults(),
+        ],
+      ),
+    );
+  }
+
+  Widget _label(BuildContext context, String text) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(text, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+    );
+  }
+
+  Widget _buildDayPicker() {
+    final today = _today();
+    final days = [
+      for (var i = 0; i <= _daysAhead; i++) DateTime(today.year, today.month, today.day + i),
+    ].where((d) => _earliestStart(d) != null).toList();
+
+    return SizedBox(
+      height: 64,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: days.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final d = days[i];
+          final diff = d.difference(today).inDays;
+          final top = diff == 0 ? 'Today' : diff == 1 ? 'Tmrw' : DateFormat('EEE').format(d);
+          final selected = d == _date;
+          final scheme = Theme.of(context).colorScheme;
+          return ChoiceChip(
+            showCheckmark: false,
+            selected: selected,
+            onSelected: _searching ? null : (_) => _changeSearch(() => _date = d),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            label: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(top, style: TextStyle(fontSize: 12, color: selected ? null : scheme.onSurfaceVariant)),
+                Text(DateFormat('d MMM').format(d), style: const TextStyle(fontWeight: FontWeight.w600)),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildStartPicker() {
+    final options = _startOptions();
+    if (options.isEmpty) {
+      return const Text('No more slots today. Pick another day.');
+    }
+    return DropdownButtonFormField<int>(
+      initialValue: options.contains(_startMin) ? _startMin : options.first,
+      key: ValueKey(_date), // rebuild with fresh options when the day changes
+      decoration: const InputDecoration(prefixIcon: Icon(Icons.access_time)),
+      menuMaxHeight: 320,
+      items: [for (final m in options) DropdownMenuItem(value: m, child: Text(_hhmm(m)))],
+      onChanged: _searching ? null : (m) => _changeSearch(() => _startMin = m!),
+    );
+  }
+
+  Widget _buildDurationPicker() {
+    final valid = _validDurations();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final d in _durations)
+          ChoiceChip(
+            label: Text(_durationLabel(d)),
+            selected: d == _duration,
+            // Lengths that would run past closing time can't be picked.
+            onSelected: !_searching && valid.contains(d) ? (_) => _changeSearch(() => _duration = d) : null,
+          ),
+      ],
+    );
+  }
+
+  List<Widget> _buildResults() {
+    if (_error != null) {
+      return [
+        MessageView(
+          icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
+          title: _errorIsSession ? 'Session expired' : "Couldn't load rooms",
+          message: _error,
+          action: _errorIsSession
+              ? FilledButton.icon(
+                  onPressed: () => goToAccount(context, ref),
+                  icon: const Icon(Icons.login),
+                  label: const Text('Sign in again'),
+                )
+              : FilledButton.icon(
+                  onPressed: _search,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try again'),
+                ),
+        ),
+      ];
+    }
+
+    final rooms = _rooms;
+    if (rooms == null) return [];
+
+    if (rooms.isEmpty) {
+      return [
+        const MessageView(
+          icon: Icons.meeting_room_outlined,
+          title: 'No rooms free for this slot',
+          message: 'Try a shorter time, a different start time or another day.',
+        ),
+      ];
+    }
+
+    final q = _filter.toLowerCase();
+    final shown = q.isEmpty
+        ? rooms
+        : rooms.where((r) => '${r.room.rsrcName} ${r.room.rsrcTypName}'.toLowerCase().contains(q)).toList();
+    final theme = Theme.of(context);
+
+    return [
+      Text(
+        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free',
+        style: theme.textTheme.titleMedium,
+      ),
+      const SizedBox(height: 8),
+      if (rooms.length > 5) ...[
+        TextField(
+          decoration: const InputDecoration(
+            hintText: 'Filter by room name',
+            prefixIcon: Icon(Icons.filter_list),
+            isDense: true,
+          ),
+          onChanged: (v) => setState(() => _filter = v),
+        ),
+        const SizedBox(height: 12),
+      ],
+      if (shown.isEmpty)
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text('No rooms match "$_filter".', textAlign: TextAlign.center),
+        ),
+      for (final rm in shown)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Card(
+            clipBehavior: Clip.antiAlias,
+            child: ListTile(
+              onTap: () => _book(rm),
+              contentPadding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+              leading: const Icon(Icons.meeting_room_outlined),
+              title: Text(rm.room.rsrcName, style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text(
+                [
+                  if (rm.room.rsrcTypName.isNotEmpty) rm.room.rsrcTypName,
+                  if (rm.room.capacity > 0) 'Seats ${rm.room.capacity}',
+                ].join(' · '),
+              ),
+              trailing: FilledButton.tonal(
+                onPressed: () => _book(rm),
+                child: const Text('Book'),
+              ),
+            ),
+          ),
+        ),
+    ];
+  }
+}
+
+/// Last check before booking, so a stray tap never books a room.
+class _ConfirmBookingSheet extends ConsumerStatefulWidget {
+  final RoomWithSlots room;
+  final String date;
+  final String slotSummary;
+
+  const _ConfirmBookingSheet({required this.room, required this.date, required this.slotSummary});
+
+  @override
+  ConsumerState<_ConfirmBookingSheet> createState() => _ConfirmBookingSheetState();
+}
+
+class _ConfirmBookingSheetState extends ConsumerState<_ConfirmBookingSheet> {
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _confirm() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
-      showDialog(
-        context: context, 
-        barrierDismissible: false,
-        builder: (c) => const Center(child: CircularProgressIndicator())
-      );
-
-      final service = ref.read(bookingServiceProvider);
-      final dateStr = DateFormat('d MMM yyyy').format(_selectedDate);
-      
-      await service.initiateAndConfirmBooking(roomWithSlots.room, roomWithSlots.slots, dateStr);
-
-      if (mounted) {
-        Navigator.pop(context); // pop loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Successfully booked ${roomWithSlots.room.rsrcName}!'), backgroundColor: Colors.green)
-        );
-        _fetchRooms(); // refresh
-      }
+      await ref
+          .read(bookingServiceProvider)
+          .initiateAndConfirmBooking(widget.room.room, widget.room.slots, widget.date);
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
-        Navigator.pop(context); // pop loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Booking failed: $e'), backgroundColor: Colors.red)
-        );
+        setState(() {
+          _busy = false;
+          _error = friendlyError(e);
+        });
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isAuthenticated = ref.watch(authStateProvider);
+    final theme = Theme.of(context);
+    final room = widget.room.room;
+    final disclaimer = room.disclaimer.trim();
 
-    if (_isAutoLoggingIn) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Create Booking')),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+    Widget row(IconData icon, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
             children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 20),
-              Text('Authenticating securely...', style: TextStyle(fontSize: 18)),
+              Icon(icon, size: 20, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              Expanded(child: Text(text, style: theme.textTheme.bodyLarge)),
             ],
           ),
-        ),
-      );
-    }
+        );
 
-    if (!isAuthenticated) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Create Booking')),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock_outline, size: 80, color: Colors.grey),
-              SizedBox(height: 20),
-              Text('Not Authenticated', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              SizedBox(height: 10),
-              Text('Please go to Settings to connect your ADFS account.'),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Create Booking')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _selectDate(context),
-                    icon: const Icon(Icons.calendar_month),
-                    label: Text(DateFormat('d MMM yyyy').format(_selectedDate)),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _selectStartTime(context),
-                    icon: const Icon(Icons.access_time),
-                    label: Text("Start: ${_startTime.format(context)}"),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _selectEndTime(context),
-                    icon: const Icon(Icons.access_time),
-                    label: Text("End: ${_endTime.format(context)}"),
-                  ),
-                ),
-              ],
-            ),
+            Text('Confirm booking', style: theme.textTheme.headlineSmall),
             const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                onPressed: _isLoading ? null : _fetchRooms,
-                child: _isLoading 
-                  ? const CircularProgressIndicator()
-                  : const Text('Find Available Rooms'),
-              ),
+            row(Icons.meeting_room_outlined, room.rsrcName),
+            row(Icons.schedule, widget.slotSummary),
+            if (room.capacity > 0) row(Icons.groups_outlined, 'Seats ${room.capacity}'),
+            if (disclaimer.isNotEmpty && disclaimer.toUpperCase() != 'N.A') ...[
+              const SizedBox(height: 4),
+              Text(disclaimer, style: theme.textTheme.bodySmall),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+            ],
+            const SizedBox(height: 20),
+            BusyButton(
+              onPressed: _confirm,
+              busy: _busy,
+              icon: Icons.check,
+              label: _error == null ? 'Confirm booking' : 'Try again',
+              busyLabel: 'Booking…',
             ),
-            const SizedBox(height: 24),
-            
-            if (_errorMessage != null)
-              Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
-              
-            if (_availableRooms != null) ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Available Rooms (${_availableRooms!.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _availableRooms!.length,
-                  itemBuilder: (context, index) {
-                    final rm = _availableRooms![index];
-                    return Card(
-                      child: ListTile(
-                        title: Text(rm.room.rsrcName),
-                        subtitle: Text('Capacity: ${rm.room.capacity} • Slots: ${rm.slots.length}'),
-                        trailing: ElevatedButton(
-                          onPressed: () => _bookRoom(rm),
-                          child: const Text('Book'),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ]
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _busy ? null : () => Navigator.pop(context, false),
+              child: const Text('Not now'),
+            ),
           ],
         ),
       ),

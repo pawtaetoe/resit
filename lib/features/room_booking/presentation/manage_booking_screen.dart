@@ -3,62 +3,51 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/core/ui/app_theme.dart';
+import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 
-class ManageBookingScreen extends ConsumerStatefulWidget {
+/// My bookings: upcoming (confirmed) and past bookings, with cancel.
+class ManageBookingScreen extends StatelessWidget {
   const ManageBookingScreen({super.key});
 
   @override
-  ConsumerState<ManageBookingScreen> createState() => _ManageBookingScreenState();
+  Widget build(BuildContext context) {
+    return AuthGate(title: 'My bookings', builder: (_) => const _ManageBookingsView());
+  }
 }
 
-class _ManageBookingScreenState extends ConsumerState<ManageBookingScreen> {
+enum _Tab { upcoming, past }
+
+class _ManageBookingsView extends ConsumerStatefulWidget {
+  const _ManageBookingsView();
+
+  @override
+  ConsumerState<_ManageBookingsView> createState() => _ManageBookingsViewState();
+}
+
+class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
   bool _isLoading = false;
-  bool _isAutoLoggingIn = false;
   List<Booking>? _bookings;
-  String? _errorMessage;
-  String _selectedStatus = 'current';
+  String? _error;
+  bool _errorIsSession = false;
+  _Tab _tab = _Tab.upcoming;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (ref.read(authStateProvider)) {
-        _fetchBookings();
-      } else {
-        _attemptAutoLogin();
-      }
-    });
-  }
-
-  Future<void> _attemptAutoLogin() async {
-    setState(() => _isAutoLoggingIn = true);
-    try {
-      // A fresh login needs MFA approval, so only reuse the saved session
-      // here. If it has lapsed the user reconnects from Settings.
-      final success = await ref.read(authServiceProvider).resumeSession();
-      if (success && mounted) {
-        _fetchBookings();
-      }
-    } catch (e) {
-      // Auto login failed silently
-    } finally {
-      if (mounted) {
-        setState(() => _isAutoLoggingIn = false);
-      }
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _fetchBookings());
   }
 
   DateTime _parseBookingDateTime(String dateStr, String timeRangeStr) {
     try {
       final date = DateFormat('d MMM yyyy').parse(dateStr);
       if (timeRangeStr.contains('-')) {
-        final startTimeStr = timeRangeStr.split('-')[0].trim();
-        final parts = startTimeStr.split(':');
+        final parts = timeRangeStr.split('-')[0].trim().split(':');
         if (parts.length == 2) {
-          final hours = int.parse(parts[0]);
-          final minutes = int.parse(parts[1]);
-          return date.add(Duration(hours: hours, minutes: minutes));
+          return date.add(Duration(hours: int.parse(parts[0]), minutes: int.parse(parts[1])));
         }
       }
       return date;
@@ -72,197 +61,114 @@ class _ManageBookingScreenState extends ConsumerState<ManageBookingScreen> {
   }
 
   Future<void> _fetchBookings() async {
+    final tab = _tab;
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _error = null;
     });
 
     try {
       final service = ref.read(bookingServiceProvider);
-      
-      if (_selectedStatus == 'current') {
-        final rawList = await service.getBookings(bookingStatus: 'current');
-        final filteredList = rawList.where((b) => b.status.toLowerCase() == 'confirmed').toList();
-        
-        filteredList.sort((a, b) {
-          final aDateTime = _parseBookingDateTime(a.date, a.timeRange);
-          final bDateTime = _parseBookingDateTime(b.date, b.timeRange);
-          return bDateTime.compareTo(aDateTime);
-        });
+      List<Booking> list;
 
-        setState(() {
-          _bookings = filteredList;
-        });
+      if (tab == _Tab.upcoming) {
+        final raw = await service.getBookings(bookingStatus: 'current');
+        list = raw.where((b) => b.status.toLowerCase() == 'confirmed').toList();
+        // Soonest first: that's the one you need next.
+        list.sort((a, b) => _parseBookingDateTime(a.date, a.timeRange)
+            .compareTo(_parseBookingDateTime(b.date, b.timeRange)));
       } else {
-        // Fetch history and current to combine non-confirmed ones
-        List<Booking> historyList = [];
+        // History plus current bookings that are no longer confirmed.
+        List<Booking> history = [];
         try {
-          historyList = await service.getBookings(bookingStatus: 'history');
+          history = await service.getBookings(bookingStatus: 'history');
         } catch (_) {
-          // Ignore history API failure/absence and default to empty
+          // History may be unavailable; show what we have.
         }
-
-        List<Booking> currentList = [];
+        List<Booking> current = [];
         try {
-          currentList = await service.getBookings(bookingStatus: 'current');
-        } catch (_) {
-          // Ignore current API failure for this part
+          current = await service.getBookings(bookingStatus: 'current');
+        } catch (_) {}
+
+        final combined = <String, Booking>{};
+        for (final b in history) {
+          combined[b.bookingRef] = b;
         }
-
-        final nonConfirmedCurrent = currentList.where((b) => b.status.toLowerCase() != 'confirmed').toList();
-
-        final combinedMap = <String, Booking>{};
-        for (var b in historyList) {
-          combinedMap[b.bookingRef] = b;
+        for (final b in current.where((b) => b.status.toLowerCase() != 'confirmed')) {
+          combined[b.bookingRef] = b;
         }
-        for (var b in nonConfirmedCurrent) {
-          combinedMap[b.bookingRef] = b;
-        }
+        list = combined.values.toList()
+          ..sort((a, b) => _parseBookingDateTime(b.date, b.timeRange)
+              .compareTo(_parseBookingDateTime(a.date, a.timeRange)));
+      }
 
-        final combinedList = combinedMap.values.toList();
-        
-        combinedList.sort((a, b) {
-          final aDateTime = _parseBookingDateTime(a.date, a.timeRange);
-          final bDateTime = _parseBookingDateTime(b.date, b.timeRange);
-          return bDateTime.compareTo(aDateTime);
-        });
-
+      // Ignore a late answer for a tab the user has already left.
+      if (mounted && tab == _tab) setState(() => _bookings = list);
+    } catch (e) {
+      if (mounted && tab == _tab) {
         setState(() {
-          _bookings = combinedList;
+          _error = friendlyError(e);
+          _errorIsSession = isSessionError(e);
         });
       }
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString();
-      });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted && tab == _tab) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _confirmAndCancelBooking(Booking booking) async {
+  Future<void> _cancel(Booking booking) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.red),
-            SizedBox(width: 8),
-            Text('Cancel Booking'),
-          ],
-        ),
-        content: Text('Are you sure you want to cancel your booking for ${booking.roomName} on ${booking.date} (${booking.timeRange})?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Back'),
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        return AlertDialog(
+          icon: Icon(Icons.event_busy, color: scheme.error),
+          title: const Text('Cancel this booking?'),
+          content: Text(
+            '${booking.roomName}\n${booking.date}, ${booking.timeRange}\n\n'
+            "The room is released straight away and this can't be undone.",
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Keep booking')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: scheme.error, foregroundColor: scheme.onError),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Cancel booking'),
             ),
-            child: const Text('Cancel Booking'),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
+    if (confirmed != true || !mounted) return;
 
-    if (confirmed != true) return;
-
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
+    setState(() => _cancelling.add(booking.bookingRef));
     try {
-      final service = ref.read(bookingServiceProvider);
-      await service.cancelBooking(booking.cancelId);
-
-      if (mounted) {
-        Navigator.pop(context); // pop loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Successfully cancelled booking ${booking.bookingRef}!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _fetchBookings(); // refresh the list
-      }
+      await ref.read(bookingServiceProvider).cancelBooking(booking.cancelId);
+      if (!mounted) return;
+      showSuccess(context, 'Booking for ${booking.roomName} cancelled.');
+      await _fetchBookings();
     } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // pop loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to cancel: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (mounted) showError(context, "Couldn't cancel: ${friendlyError(e)}");
+    } finally {
+      if (mounted) setState(() => _cancelling.remove(booking.bookingRef));
     }
   }
 
-  void _copyToClipboard(String text) {
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Booking reference copied to clipboard'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+  final Set<String> _cancelling = {};
+
+  void _copyRef(String ref) {
+    Clipboard.setData(ClipboardData(text: ref));
+    showSuccess(context, 'Booking reference $ref copied.');
   }
 
   @override
   Widget build(BuildContext context) {
-    final isAuthenticated = ref.watch(authStateProvider);
-
-    if (_isAutoLoggingIn) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Manage Bookings')),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 20),
-              Text('Authenticating securely...', style: TextStyle(fontSize: 18)),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (!isAuthenticated) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Manage Bookings')),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.lock_outline, size: 80, color: Colors.grey),
-              SizedBox(height: 20),
-              Text(
-                'Not Authenticated',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 10),
-              Text('Please go to Settings to connect your ADFS account first.'),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Manage Bookings'),
+        title: const Text('My bookings'),
         actions: [
           IconButton(
+            tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
             onPressed: _isLoading ? null : _fetchBookings,
           ),
@@ -271,26 +177,18 @@ class _ManageBookingScreenState extends ConsumerState<ManageBookingScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: SizedBox(
               width: double.infinity,
-              child: SegmentedButton<String>(
+              child: SegmentedButton<_Tab>(
                 segments: const [
-                  ButtonSegment<String>(
-                    value: 'current',
-                    label: Text('Current'),
-                    icon: Icon(Icons.today),
-                  ),
-                  ButtonSegment<String>(
-                    value: 'history',
-                    label: Text('History'),
-                    icon: Icon(Icons.history),
-                  ),
+                  ButtonSegment(value: _Tab.upcoming, label: Text('Upcoming'), icon: Icon(Icons.upcoming_outlined)),
+                  ButtonSegment(value: _Tab.past, label: Text('Past & cancelled'), icon: Icon(Icons.history)),
                 ],
-                selected: {_selectedStatus},
-                onSelectionChanged: (newSelection) {
+                selected: {_tab},
+                onSelectionChanged: (s) {
                   setState(() {
-                    _selectedStatus = newSelection.first;
+                    _tab = s.first;
                     _bookings = null;
                   });
                   _fetchBookings();
@@ -298,202 +196,184 @@ class _ManageBookingScreenState extends ConsumerState<ManageBookingScreen> {
               ),
             ),
           ),
-          Expanded(
-            child: _buildMainContent(),
-          ),
+          SizedBox(height: 3, child: _isLoading && _bookings != null ? const LinearProgressIndicator() : null),
+          Expanded(child: _buildContent()),
         ],
       ),
     );
   }
 
-  Widget _buildMainContent() {
+  Widget _buildContent() {
     if (_isLoading && _bookings == null) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_errorMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.red),
-              const SizedBox(height: 16),
-              Text(
-                'Error Fetching Bookings',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _errorMessage!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
+    if (_error != null) {
+      return MessageView(
+        icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
+        tone: Tone.danger,
+        title: _errorIsSession ? 'Session expired' : "Couldn't load bookings",
+        message: _error,
+        action: _errorIsSession
+            ? FilledButton.icon(
+                onPressed: () => goToAccount(context, ref),
+                icon: const Icon(Icons.login),
+                label: const Text('Sign in again'),
+              )
+            : FilledButton.icon(
                 onPressed: _fetchBookings,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Retry'),
+                label: const Text('Try again'),
               ),
-            ],
+      );
+    }
+
+    final bookings = _bookings ?? const <Booking>[];
+    if (bookings.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _fetchBookings,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: SizedBox(
+              height: constraints.maxHeight,
+              child: MessageView(
+                icon: Icons.event_available_outlined,
+                title: _tab == _Tab.upcoming ? 'No upcoming bookings' : 'No past bookings',
+                message: _tab == _Tab.upcoming
+                    ? 'Rooms you book will show up here.'
+                    : 'Finished and cancelled bookings will show up here.',
+                action: _tab == _Tab.upcoming
+                    ? FilledButton.icon(
+                        onPressed: () => Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Book a room'),
+                      )
+                    : null,
+              ),
+            ),
           ),
         ),
       );
     }
 
-    if (_bookings == null || _bookings!.isEmpty) {
-      return Center(
+    return RefreshIndicator(
+      onRefresh: _fetchBookings,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        itemCount: bookings.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, i) => _BookingCard(
+          booking: bookings[i],
+          cancelling: _cancelling.contains(bookings[i].bookingRef),
+          onCancel: () => _cancel(bookings[i]),
+          onCopyRef: () => _copyRef(bookings[i].bookingRef),
+        ),
+      ),
+    );
+  }
+}
+
+class _BookingCard extends StatelessWidget {
+  final Booking booking;
+  final bool cancelling;
+  final VoidCallback onCancel;
+  final VoidCallback onCopyRef;
+
+  const _BookingCard({
+    required this.booking,
+    required this.cancelling,
+    required this.onCancel,
+    required this.onCopyRef,
+  });
+
+  (Tone, IconData) _statusLook(String status) {
+    switch (status.toLowerCase()) {
+      case 'confirmed':
+        return (Tone.success, Icons.check_circle_outline);
+      case 'cancelled':
+        return (Tone.danger, Icons.cancel_outlined);
+      default:
+        return (Tone.neutral, Icons.info_outline);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final (tone, icon) = _statusLook(booking.status);
+    final canCancel = booking.status.toLowerCase() == 'confirmed' && booking.cancelId.isNotEmpty;
+
+    Widget detail(IconData icon, String text) => Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: muted),
+              const SizedBox(width: 10),
+              Expanded(child: Text(text)),
+            ],
+          ),
+        );
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.calendar_today_outlined, size: 80, color: Colors.grey.shade400),
-            const SizedBox(height: 20),
-            Text(
-              'No Bookings Found',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey.shade700),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(booking.roomName, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 8),
+                  StatusPill(label: booking.status, tone: tone, icon: icon),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              _selectedStatus == 'current'
-                  ? 'You don\'t have any active bookings.'
-                  : 'You have no booking history.',
-              style: TextStyle(color: Colors.grey.shade500),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () {
-                // Navigate back or to dashboard screen
-                Navigator.pop(context);
-              },
-              child: const Text('Go Book a Room'),
+            detail(Icons.calendar_today_outlined, booking.date),
+            detail(Icons.schedule, booking.timeRange),
+            if (booking.purpose.isNotEmpty && booking.purpose != 'N.A') detail(Icons.label_outline, booking.purpose),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: muted,
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 0),
+                    ),
+                    onPressed: onCopyRef,
+                    icon: const Icon(Icons.copy, size: 16),
+                    label: Text('Ref ${booking.bookingRef}', overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+                if (canCancel)
+                  cancelling
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                        )
+                      : TextButton.icon(
+                          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
+                          onPressed: onCancel,
+                          icon: const Icon(Icons.event_busy, size: 18),
+                          label: const Text('Cancel'),
+                        ),
+              ],
             ),
           ],
         ),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16.0),
-      itemCount: _bookings!.length,
-      itemBuilder: (context, index) {
-        final booking = _bookings![index];
-        final isConfirmed = booking.status.toLowerCase() == 'confirmed';
-        final isCancelled = booking.status.toLowerCase() == 'cancelled';
-
-        Color statusColor = Colors.grey;
-        if (isConfirmed) statusColor = Colors.green;
-        if (isCancelled) statusColor = Colors.red;
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 16.0),
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        booking.roomName,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: statusColor.withOpacity(0.5)),
-                      ),
-                      child: Text(
-                        booking.status,
-                        style: TextStyle(
-                          color: statusColor,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const Divider(height: 24),
-                Row(
-                  children: [
-                    const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text(booking.date),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.access_time, size: 16, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text(booking.timeRange),
-                  ],
-                ),
-                if (booking.purpose.isNotEmpty && booking.purpose != 'N.A') ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Icon(Icons.label_outline, size: 16, color: Colors.grey),
-                      const SizedBox(width: 8),
-                      Text('Purpose: ${booking.purpose}'),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () => _copyToClipboard(booking.bookingRef),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4.0),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.copy, size: 14, color: Colors.blueAccent),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Ref: ${booking.bookingRef}',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Colors.blueAccent,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (isConfirmed && booking.cancelId.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _confirmAndCancelBooking(booking),
-                      icon: const Icon(Icons.cancel_outlined, size: 18),
-                      label: const Text('Cancel Booking'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
+      ),
     );
   }
 }

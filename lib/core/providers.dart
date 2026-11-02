@@ -38,3 +38,10 @@ final timetableServiceProvider = Provider<TimetableService>((ref) {
 
 // A provider to manage the login state globally
 final authStateProvider = StateProvider<bool>((ref) => false);
+
+/// True while the app is quietly restoring the saved session at startup.
+final sessionRestoringProvider = StateProvider<bool>((ref) => false);
+
+/// Which bottom tab is showing (0 = Home, 1 = Account). Lets other screens
+/// send the user to Account to sign in.
+final homeTabProvider = StateProvider<int>((ref) => 0);

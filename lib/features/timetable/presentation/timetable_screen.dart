@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/core/ui/app_theme.dart';
+import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
@@ -34,7 +37,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
   // Weeks are fetched one at a time (the server keeps the page state) and
   // cached by their Monday.
   final Map<DateTime, WeekSchedule> _weeks = {};
-  final Map<DateTime, String> _weekErrors = {};
+  final Map<DateTime, Object> _weekErrors = {};
   final Set<DateTime> _loadingWeeks = {};
   MfaChallenge? _mfaChallenge;
 
@@ -67,7 +70,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       setState(() => _weeks[monday] = week);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _weekErrors[monday] = e.toString());
+      setState(() => _weekErrors[monday] = e);
     } finally {
       if (mounted) {
         setState(() {
@@ -153,18 +156,17 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
           children: [
             Text(s.courseCode, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text('${s.component} • ${s.section}'),
-            const SizedBox(height: 4),
-            Text('${DateFormat('EEEE, d MMM yyyy').format(s.date)}  ${s.timeLabel}'),
-            if (s.location.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text('Location: ${s.location}'),
-            ],
+            const SizedBox(height: 12),
+            _detailRow(Icons.class_outlined, '${s.component} · ${s.section}'),
+            _detailRow(Icons.calendar_today_outlined, DateFormat('EEEE, d MMM yyyy').format(s.date)),
+            _detailRow(Icons.schedule, s.timeLabel),
+            if (s.location.isNotEmpty) _detailRow(Icons.place_outlined, s.location),
             if (s.coinciding) ...[
               const SizedBox(height: 8),
-              const Text(
-                'This class overlaps with another class at the same time.',
-                style: TextStyle(color: Colors.orange, fontSize: 12),
+              const StatusPill(
+                label: 'Clashes with another class',
+                tone: Tone.warning,
+                icon: Icons.warning_amber_rounded,
               ),
             ],
           ],
@@ -172,6 +174,17 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       ),
     );
   }
+
+  Widget _detailRow(IconData icon, String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyLarge)),
+          ],
+        ),
+      );
 
   Widget _buildGrid(DateTime monday, WeekSchedule? week) {
     final today = DateTime.now();
@@ -186,6 +199,12 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
     return LayoutBuilder(builder: (context, constraints) {
       final colWidth = (constraints.maxWidth - _timeColumnWidth) / _dayCount;
       final scheme = Theme.of(context).colorScheme;
+      final muted = scheme.onSurfaceVariant;
+      final nowDate = DateTime(today.year, today.month, today.day);
+      final todayIndex = nowDate.difference(monday).inDays;
+      final nowMin = today.hour * 60 + today.minute;
+      final showNow = todayIndex >= 0 && todayIndex < _dayCount &&
+          nowMin >= startHour * 60 && nowMin <= endHour * 60;
 
       final header = Row(
         children: [
@@ -198,7 +217,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                 width: colWidth,
                 child: Column(
                   children: [
-                    Text(DateFormat('E').format(date), style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    Text(DateFormat('E').format(date), style: TextStyle(fontSize: 11, color: isToday ? scheme.primary : muted)),
                     const SizedBox(height: 2),
                     CircleAvatar(
                       radius: 13,
@@ -213,7 +232,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                       ),
                     ),
                     if (date.day == 1 || d == 0)
-                      Text(DateFormat('MMM').format(date), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                      Text(DateFormat('MMM').format(date), style: TextStyle(fontSize: 10, color: muted)),
                   ],
                 ),
               );
@@ -239,11 +258,11 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                         child: Text(
                           '${h.toString().padLeft(2, '0')}:00',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 10, color: Colors.grey),
+                          style: TextStyle(fontSize: 10, color: muted),
                         ),
                       ),
                     ),
-                    Expanded(child: Divider(height: 1, color: Colors.grey.withValues(alpha: 0.3))),
+                    Expanded(child: Divider(height: 1, color: scheme.outlineVariant)),
                   ],
                 ),
               ),
@@ -253,7 +272,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                   left: _timeColumnWidth + d * colWidth,
                   top: 0,
                   bottom: 0,
-                  child: VerticalDivider(width: 1, color: Colors.grey.withValues(alpha: 0.2)),
+                  child: VerticalDivider(width: 1, color: scheme.outlineVariant.withValues(alpha: 0.6)),
                 ),
               if (week != null)
                 for (final placed in _layoutDay(week.forDay(d)))
@@ -268,22 +287,47 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                       child: GestureDetector(
                         onTap: () => _showDetails(s),
                         child: Container(
-                          padding: const EdgeInsets.all(2),
+                          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
                           decoration: BoxDecoration(
                             color: _courseColor(s.courseCode),
                             borderRadius: BorderRadius.circular(4),
                             border: s.coinciding ? Border.all(color: Colors.orangeAccent, width: 1.5) : null,
                           ),
-                          child: Text(
-                            '${s.courseCode}\n${s.component}\n${s.location}',
-                            overflow: TextOverflow.clip,
-                            style: const TextStyle(color: Colors.white, fontSize: 9, height: 1.15),
+                          child: Semantics(
+                            button: true,
+                            label: '${s.courseCode} ${s.component}, ${s.timeLabel}, ${s.location}',
+                            excludeSemantics: true,
+                            child: Text.rich(
+                              TextSpan(children: [
+                                TextSpan(
+                                  text: '${s.courseCode}\n',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10),
+                                ),
+                                TextSpan(text: '${s.component}\n${s.location}'),
+                              ]),
+                              overflow: TextOverflow.clip,
+                              style: const TextStyle(color: Colors.white, fontSize: 9, height: 1.2),
+                            ),
                           ),
                         ),
                       ),
                     );
                   }),
             ],
+            if (showNow)
+              Positioned(
+                left: _timeColumnWidth + todayIndex * colWidth - 4,
+                width: colWidth + 4,
+                top: (nowMin - startHour * 60) / 60 * _hourHeight - 4,
+                child: IgnorePointer(
+                  child: Row(
+                    children: [
+                      CircleAvatar(radius: 4, backgroundColor: scheme.error),
+                      Expanded(child: Container(height: 2, color: scheme.error)),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       );
@@ -321,23 +365,23 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
     }
 
     if (week == null && error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 64, color: Colors.red),
-              const SizedBox(height: 16),
-              Text(error, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              ElevatedButton(
+      final session = isSessionError(error);
+      return MessageView(
+        icon: session ? Icons.lock_clock : Icons.cloud_off,
+        tone: Tone.danger,
+        title: session ? 'Session expired' : "Couldn't load this week",
+        message: friendlyError(error),
+        action: session
+            ? FilledButton.icon(
+                onPressed: () => goToAccount(context, ref),
+                icon: const Icon(Icons.login),
+                label: const Text('Sign in again'),
+              )
+            : FilledButton.icon(
                 onPressed: () => _loadWeek(monday, force: true),
-                child: const Text('Retry'),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try again'),
               ),
-            ],
-          ),
-        ),
       );
     }
 
@@ -348,7 +392,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
         if (week != null && week.sessions.isEmpty)
           const Padding(
             padding: EdgeInsets.all(12),
-            child: Text('No classes this week.', style: TextStyle(color: Colors.grey)),
+            child: StatusPill(label: 'No classes this week', tone: Tone.neutral, icon: Icons.free_breakfast_outlined),
           ),
       ],
     );
@@ -359,7 +403,16 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
     final monday = _weekStart(_page);
     return Scaffold(
       appBar: AppBar(
-        title: Text(_weekLabel(monday), style: const TextStyle(fontSize: 16)),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Timetable'),
+            Text(
+              _page == _initialPage ? 'This week · ${_weekLabel(monday)}' : _weekLabel(monday),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Previous week',
@@ -367,7 +420,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
             onPressed: () => _goToPage(_page - 1),
           ),
           IconButton(
-            tooltip: 'This week',
+            tooltip: 'Back to this week',
             icon: const Icon(Icons.today),
             onPressed: _page == _initialPage ? null : () => _goToPage(_initialPage),
           ),
