@@ -787,10 +787,23 @@ class AuthService {
     return match?.group(1);
   }
 
+  /// The error message an ADFS page shows, or null. ADFS fills its error box
+  /// from a script after the page loads (`delayPopulate('errorText', "...")`),
+  /// so that is read first; the "View details" link that sits in a box styled
+  /// as an error is never taken for the message.
   String? _extractError(dom.Document doc) {
+    final scripted = RegExp(r"""[dD]elayPopulate\(\s*['"]errorText['"]\s*,\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""");
+    for (final script in doc.querySelectorAll('script')) {
+      for (final m in scripted.allMatches(script.text)) {
+        final text = (m.group(1) ?? m.group(2) ?? '').replaceAll(r'\"', '"').replaceAll(r"\'", "'").trim();
+        if (text.isNotEmpty) return text;
+      }
+    }
+
     for (final el in doc.querySelectorAll('#errorText, #error, .error, .error-text, [id*="rror"]')) {
+      if (el.id == 'detailsDiv' || el.querySelector('#viewDetailsLink') != null) continue;
       final text = el.text.trim();
-      if (text.isNotEmpty) return text;
+      if (text.isNotEmpty && text != 'View details') return text;
     }
     return null;
   }

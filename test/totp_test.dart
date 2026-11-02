@@ -93,6 +93,32 @@ void main() {
         </form>
       </body></html>''';
 
+    const sitPage = '''
+      <div id="loginArea">
+        <form method="post" id="loginForm" autocomplete="off">
+          <input id="authMethod" type="hidden" name="AuthMethod" value="AzureMfaAuthentication">
+          <input id="context" type="hidden" name="Context" value="ctx">
+          <input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="">
+          <div id="instructionsDiv"><p id="instructions">Enter the verification code from your mobile app or hardware token.</p></div>
+          <div id="verificationCodeDiv">
+            <label id="verificationCode" for="verificationCodeInput">Verification code</label>
+            <input id="verificationCodeInput" name="VerificationCode" type="text" value="" placeholder="Enter your verification code">
+          </div>
+          <div id="errorDiv" class="mediumBottomSpacing error" style="display: none;"><p id="errorText"></p></div>
+          <div id="detailsDiv" class="smallTopSpacing error" style="display: none;">
+            <a id="viewDetailsLink" class="actionLink" href="#">View details</a>
+          </div>
+          <input id="signInButton" type="submit" name="SignIn" value="Sign in">
+          <a id="differentVerificationOption" href="#">Use a different verification option</a>
+        </form>
+      </div>
+      <div id="authOptions">
+        <form id="options" method="post" action="https://fs.example.edu/adfs/ls/idpinitiatedsignon.asmx">
+          <input id="optionSelection" type="hidden" name="AuthMethod">
+          <input id="userNameInputOptionsHolder" name="UserName" value="2100000@sit.singaporetech.edu.sg" type="hidden">
+        </form>
+      </div>''';
+
     late List<String?> codesSeen;
 
     setUp(() {
@@ -118,9 +144,16 @@ void main() {
           codesSeen.add(code);
           expect(request.bodyFields['Context'], 'ctx');
           final ok = acceptCode && code == config.codeAt(DateTime.now());
+          // A rejected code re-shows the page; like SIT's, the error text is
+          // filled in by a script after load.
           return http.Response(
-              ok ? relayPage : codePage.replaceFirst('<form', '<div id="errorText">Wrong code</div><form'), 200,
-              request: request);
+            ok
+                ? relayPage
+                : page.replaceFirst('</form>',
+                    '</form><script>function start() { delayPopulate(\'errorText\', "Wrong code"); }</script>'),
+            200,
+            request: request,
+          );
         }
         if (path == '/Account/LoginCallbak') {
           return http.Response('', 200, request: request, headers: {'set-cookie': '.AspNet.Cookies=abc; Path=/'});
@@ -145,28 +178,7 @@ void main() {
       // Structure of SIT's ADFS Azure MFA code page (Context shortened):
       // the code box is in loginForm, which has no action, and a second
       // "options" form switches method.
-      const sitPage = '''
-        <div id="loginArea">
-          <form method="post" id="loginForm" autocomplete="off">
-            <input id="authMethod" type="hidden" name="AuthMethod" value="AzureMfaAuthentication">
-            <input id="context" type="hidden" name="Context" value="ctx">
-            <input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="">
-            <div id="instructionsDiv"><p id="instructions">Enter the verification code from your mobile app or hardware token.</p></div>
-            <div id="verificationCodeDiv">
-              <label id="verificationCode" for="verificationCodeInput">Verification code</label>
-              <input id="verificationCodeInput" name="VerificationCode" type="text" value="" placeholder="Enter your verification code">
-            </div>
-            <div id="errorDiv" style="display: none;"><p id="errorText"></p></div>
-            <input id="signInButton" type="submit" name="SignIn" value="Sign in">
-            <a id="differentVerificationOption" href="#">Use a different verification option</a>
-          </form>
-        </div>
-        <div id="authOptions">
-          <form id="options" method="post" action="https://fs.example.edu/adfs/ls/idpinitiatedsignon.asmx">
-            <input id="optionSelection" type="hidden" name="AuthMethod">
-            <input id="userNameInputOptionsHolder" name="UserName" value="2100000@sit.singaporetech.edu.sg" type="hidden">
-          </form>
-        </div>''';
+
       final auth = await service(totp: config.toUri(), page: sitPage);
       final challenges = <MfaChallenge>[];
       final ok = await auth.login('2100000', 'pw', onMfaChallenge: challenges.add);
@@ -175,6 +187,18 @@ void main() {
       expect(ok, isTrue);
       expect(codesSeen, hasLength(1));
       expect(challenges.single.automatic, isTrue);
+    });
+
+    test('a rejected code on the SIT page reports its real message, not "View details"', () async {
+      final auth = await service(totp: config.toUri(), page: sitPage, acceptCode: false);
+      await expectLater(
+        auth.login('2100000', 'pw'),
+        throwsA(isA<MfaException>()
+            .having((e) => e.message, 'message', contains('Wrong code'))
+            .having((e) => e.message, 'message', isNot(contains('View details')))),
+      );
+      auth.dispose();
+      expect(codesSeen, hasLength(2));
     });
 
     test('finds a generically named code box by its hints', () async {
