@@ -30,7 +30,7 @@ class SessionExpiredException implements Exception {
 
   @override
   String toString() =>
-      'Session expired. Sign in again from Account.'
+      'Session expired.'
       '${detail != null ? '\n\n$detail' : ''}';
 }
 

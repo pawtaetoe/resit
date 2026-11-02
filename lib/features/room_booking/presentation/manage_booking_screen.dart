@@ -200,15 +200,9 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       return MessageView(
         icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
         tone: Tone.danger,
-        title: _errorIsSession ? 'Session expired' : "Couldn't load bookings",
+        title: _errorIsSession ? "Couldn't sign you in" : "Couldn't load bookings",
         message: _error,
-        action: _errorIsSession
-            ? FilledButton.icon(
-                onPressed: () => goToAccount(context, ref),
-                icon: const Icon(Icons.login),
-                label: const Text('Sign in again'),
-              )
-            : FilledButton.icon(
+        action: FilledButton.icon(
                 onPressed: _fetchBookings,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Try again'),

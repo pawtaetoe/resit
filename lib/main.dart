@@ -12,13 +12,9 @@ void main() {
   SessionClient.debugCookies = kDebugMode;
   final container = ProviderContainer();
 
-  // Restore the saved ADFS/RBS session in the background so the user does not
-  // have to redo MFA on every launch. The flag lets screens say so meanwhile.
-  container.read(sessionRestoringProvider.notifier).state = true;
-  container.read(authServiceProvider).resumeSession().catchError((Object e) {
-    debugPrint('Session restore failed: $e');
-    return false;
-  }).whenComplete(() => container.read(sessionRestoringProvider.notifier).state = false);
+  // Check the saved session on launch and sign back in automatically if it
+  // has expired, so the user never has to do it by hand.
+  container.read(sessionControllerProvider.notifier).ensureSignedIn();
 
   runApp(
     UncontrolledProviderScope(
@@ -44,13 +40,42 @@ class ReSitApp extends StatelessWidget {
   }
 }
 
-class MainLayout extends ConsumerWidget {
+class MainLayout extends ConsumerStatefulWidget {
   const MainLayout({super.key});
 
+  @override
+  ConsumerState<MainLayout> createState() => _MainLayoutState();
+}
+
+class _MainLayoutState extends ConsumerState<MainLayout> {
   static const _screens = [ServicesScreen(), SettingsScreen()];
 
+  // Coming back to the app re-checks the session (and signs back in if it
+  // expired while the app was in the background).
+  late final AppLifecycleListener _lifecycle;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(
+      onResume: () => ref.read(sessionControllerProvider.notifier).ensureSignedIn(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The session dropped while the app is open (e.g. the keep-alive found it
+    // expired): sign back in right away.
+    ref.listen<bool>(authStateProvider, (was, now) {
+      if (was == true && !now) ref.read(sessionControllerProvider.notifier).ensureSignedIn();
+    });
+
     final index = ref.watch(homeTabProvider);
     final needsSignIn = !ref.watch(authStateProvider) && !ref.watch(sessionRestoringProvider);
 

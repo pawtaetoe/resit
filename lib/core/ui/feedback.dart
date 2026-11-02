@@ -8,7 +8,7 @@ import 'package:resit/core/ui/app_theme.dart';
 /// Turns an exception into a sentence a student can act on.
 String friendlyError(Object error) {
   if (error is SessionExpiredException) {
-    return 'Your session has expired. Sign in again from Account.';
+    return "Your session expired and the app couldn't sign you back in automatically.";
   }
   if (error is MfaException) return error.message;
   if (error is SocketException || error is HandshakeException) {

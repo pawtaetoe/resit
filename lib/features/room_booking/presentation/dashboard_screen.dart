@@ -350,7 +350,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       return const Text('No more slots today. Pick another day.');
     }
     return DropdownButtonFormField<int>(
-      value: options.contains(_startMin) ? _startMin : options.first,
+      initialValue: options.contains(_startMin) ? _startMin : options.first,
       key: ValueKey(_date), // rebuild with fresh options when the day changes
       decoration: const InputDecoration(prefixIcon: Icon(Icons.access_time)),
       menuMaxHeight: 320,
@@ -392,15 +392,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       return [
         MessageView(
           icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
-          title: _errorIsSession ? 'Session expired' : "Couldn't load rooms",
+          title: _errorIsSession ? "Couldn't sign you in" : "Couldn't load rooms",
           message: _error,
-          action: _errorIsSession
-              ? FilledButton.icon(
-                  onPressed: () => goToAccount(context, ref),
-                  icon: const Icon(Icons.login),
-                  label: const Text('Sign in again'),
-                )
-              : FilledButton.icon(
+          action: FilledButton.icon(
                   onPressed: _search,
                   icon: const Icon(Icons.refresh),
                   label: const Text('Try again'),

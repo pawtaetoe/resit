@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
@@ -9,8 +9,9 @@ import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/settings/presentation/totp_section.dart';
 
-/// Account tab: sign in with the SIT (ADFS) account, see the session status,
-/// sign out.
+/// Account tab: the first sign-in, the saved login, sign out, and automatic
+/// verification codes. After the first sign-in the app signs itself back in
+/// whenever the session expires, so there's no "sign in again" here.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -22,12 +23,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _busy = false;
   bool _showPassword = false;
-  bool _hasSavedCredentials = false;
-  MfaChallenge? _mfaChallenge;
-  String? _error;
-  final _log = StringBuffer();
+  String? _savedUsername;
+
+  /// Showing the form to change the saved student ID or password.
+  bool _editing = false;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -48,79 +49,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() {
       _usernameController.text = creds['username'] ?? '';
       _passwordController.text = creds['password'] ?? '';
-      _hasSavedCredentials = creds['username'] != null;
+      _savedUsername = creds['username'];
     });
-  }
-
-  void _addLog(String line) {
-    if (mounted) setState(() => _log.writeln(line));
   }
 
   Future<void> _signIn() async {
     if (!_formKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
 
-    setState(() {
-      _busy = true;
-      _error = null;
-      _mfaChallenge = null;
-      _log.clear();
-    });
-
-    final username = _usernameController.text.trim();
-    // Passwords can legitimately start or end with spaces, so no trim.
-    final password = _passwordController.text;
-
-    try {
-      final storage = ref.read(secureStorageProvider);
-      final previous = await storage.getCredentials();
-      final unchanged = previous['username'] == username && previous['password'] == password;
-      await storage.saveCredentials(username, password);
-      _addLog('Credentials saved to secure storage.');
-      _hasSavedCredentials = true;
-
-      final authService = ref.read(authServiceProvider);
-
-      // Same credentials and a live session: no need to bother Authenticator.
-      var success = false;
-      if (unchanged) {
-        _addLog('Checking the existing session...');
-        success = await authService.resumeSession();
-        _addLog(success ? 'Existing session is still valid, no MFA needed.' : 'Saved session has expired.');
-      }
-
-      if (!success) {
-        _addLog('Starting ADFS sign-in...');
-        success = await authService.login(
-          username,
-          password,
-          onLog: _addLog,
-          onMfaChallenge: (challenge) {
-            if (!mounted) return;
-            setState(() => _mfaChallenge = challenge);
-            _addLog('Waiting for Microsoft Authenticator approval...');
-          },
+    final ok = await ref.read(sessionControllerProvider.notifier).signInWith(
+          _usernameController.text.trim(),
+          // Passwords can legitimately start or end with spaces, so no trim.
+          _passwordController.text,
         );
-      }
-
-      ref.read(authStateProvider.notifier).state = success;
-      _addLog(success ? 'Signed in. Session saved.' : 'Sign-in failed.');
-
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _mfaChallenge = null;
-        if (!success) _error = 'Sign-in failed. Check your student ID and password.';
-      });
-      if (success) showSuccess(context, "You're signed in.");
-    } catch (e) {
-      _addLog('ERROR: $e');
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _mfaChallenge = null;
-        _error = friendlyError(e);
-      });
+    await _loadCredentials();
+    if (!mounted) return;
+    if (ok) {
+      setState(() => _editing = false);
+      showSuccess(context, "You're signed in. The app will keep you signed in from now on.");
     }
   }
 
@@ -130,7 +76,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context,
       icon: Icons.logout,
       title: 'Sign out?',
-      message: "You'll need to approve the next sign-in in Microsoft Authenticator.",
+      message: "The app won't sign you back in automatically until you sign in here again.",
       choices: const [
         SheetChoice('keep', 'Sign out', icon: Icons.logout, primary: true),
         SheetChoice('forget', 'Sign out and forget my saved details', icon: Icons.delete_outline, danger: true),
@@ -140,39 +86,42 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (choice == null || choice == 'stay') return;
     final forget = choice == 'forget';
 
-    await ref.read(authServiceProvider).logout();
-    ref.read(authStateProvider.notifier).state = false;
+    await ref.read(sessionControllerProvider.notifier).signOut(forgetDetails: forget);
     if (forget) {
-      await ref.read(secureStorageProvider).clearCredentials();
-      await ref.read(secureStorageProvider).clearTotp();
       ref.invalidate(totpConfigProvider);
       _usernameController.clear();
       _passwordController.clear();
-      _hasSavedCredentials = false;
     }
+    await _loadCredentials();
     if (!mounted) return;
-    setState(_log.clear);
     showSuccess(context, forget ? 'Signed out and saved details removed.' : 'Signed out.');
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
     final signedIn = ref.watch(authStateProvider);
-    final restoring = ref.watch(sessionRestoringProvider);
+    final session = ref.watch(sessionControllerProvider);
+    _busy = session.busy;
+    final showForm = !signedIn || _editing;
+    final challenge = session.phase == SessionPhase.signingIn ? session.challenge : null;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Account')),
-      // The main action stays pinned above the tabs, within thumb reach.
-      bottomNavigationBar: ThumbBar(
-        child: BusyButton(
-          onPressed: _signIn,
-          busy: _busy,
-          icon: Icons.login,
-          label: signedIn ? 'Sign in again' : 'Sign in',
-          busyLabel: _mfaChallenge != null ? 'Waiting for approval…' : 'Signing in…',
-        ),
-      ),
+      // While signing in for the first time (or changing the saved login) the
+      // main action stays pinned above the tabs, within thumb reach.
+      bottomNavigationBar: showForm
+          ? ThumbBar(
+              child: BusyButton(
+                onPressed: _signIn,
+                busy: _busy,
+                icon: Icons.login,
+                label: _editing ? 'Save and sign in' : 'Sign in',
+                busyLabel: challenge != null && !challenge.automatic ? 'Waiting for approval…' : 'Signing in…',
+              ),
+            )
+          : null,
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -180,55 +129,80 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
-                _StatusCard(
-                  signedIn: signedIn,
-                  busy: _busy || restoring,
-                  username: _hasSavedCredentials ? _usernameController.text : null,
-                ),
+                _StatusCard(signedIn: signedIn, phase: session.phase, username: _savedUsername),
                 const SizedBox(height: 24),
-                if (_mfaChallenge != null) ...[
-                  MfaCard(challenge: _mfaChallenge!),
+                if (challenge != null) ...[
+                  MfaCard(challenge: challenge),
                   const SizedBox(height: 24),
                 ],
-                Text(signedIn ? 'Sign in again' : 'Sign in', style: theme.textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text(
-                  'Use your SIT student ID and password. You approve the sign-in once in '
-                  'Microsoft Authenticator; after that the app keeps you signed in until the session expires.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
-                const SizedBox(height: 16),
-                _buildForm(),
-                if (_error != null) ...[
-                  const SizedBox(height: 16),
-                  _ErrorBox(message: _error!),
-                ],
-                if (signedIn) ...[
-                  const SizedBox(height: 16),
+                if (signedIn && !_editing) ...[
+                  Card(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                      leading: const Icon(Icons.badge_outlined),
+                      title: Text(_savedUsername == null ? 'Saved login' : 'Student ID $_savedUsername'),
+                      subtitle: const Text('The app signs you back in automatically when your session expires.'),
+                      trailing: TextButton(
+                        onPressed: _busy ? null : () => setState(() => _editing = true),
+                        child: const Text('Change'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   OutlinedButton.icon(
                     onPressed: _busy ? null : _signOut,
                     icon: const Icon(Icons.logout),
                     label: const Text('Sign out'),
                   ),
                 ],
+                if (showForm) ...[
+                  Text(_editing ? 'Change saved login' : 'Sign in', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    _editing
+                        ? 'Enter your new student ID or password. The app signs in with it straight away.'
+                        : 'Use your SIT student ID and password. Approve this first sign-in on your phone; '
+                            'after that the app signs you back in automatically whenever the session expires.',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildForm(),
+                  if (_editing)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () {
+                                setState(() => _editing = false);
+                                _loadCredentials();
+                              },
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                ],
+                if (session.phase == SessionPhase.failed && session.error != null) ...[
+                  const SizedBox(height: 16),
+                  _ErrorBox(message: session.error!),
+                ],
                 const SizedBox(height: 24),
                 const TotpSection(),
                 const SizedBox(height: 16),
                 Row(
                   children: [
-                    Icon(Icons.shield_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                    Icon(Icons.shield_outlined, size: 18, color: muted),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Your password is stored only on this device, encrypted by the system keychain.',
-                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                        style: theme.textTheme.bodySmall?.copyWith(color: muted),
                       ),
                     ),
                   ],
                 ),
-                if (_log.isNotEmpty) ...[
+                if (session.log.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _LogPanel(log: _log.toString()),
+                  _LogPanel(log: session.log.join('\n')),
                 ],
               ],
             ),
@@ -286,10 +260,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
 class _StatusCard extends StatelessWidget {
   final bool signedIn;
-  final bool busy;
+  final SessionPhase phase;
   final String? username;
 
-  const _StatusCard({required this.signedIn, required this.busy, this.username});
+  const _StatusCard({required this.signedIn, required this.phase, this.username});
 
   @override
   Widget build(BuildContext context) {
@@ -301,9 +275,17 @@ class _StatusCard extends StatelessWidget {
             'Signed in',
             username != null ? 'Student ID $username' : 'Session active'
           )
-        : busy
-            ? (Tone.info, Icons.sync, 'Connecting…', 'Checking your SIT session')
-            : (Tone.warning, Icons.person_off_outlined, 'Not signed in', 'Sign in below to use bookings and timetable');
+        : switch (phase) {
+            SessionPhase.checking => (Tone.info, Icons.sync, 'Checking your session…', 'This only takes a moment'),
+            SessionPhase.signingIn => (Tone.info, Icons.sync, 'Signing you back in…', 'Using your saved login'),
+            SessionPhase.failed => (Tone.danger, Icons.error_outline, "Couldn't sign you in", 'See the message below'),
+            _ => (
+                Tone.warning,
+                Icons.person_off_outlined,
+                'Not signed in',
+                'Sign in below to use bookings and timetable'
+              ),
+          };
     final (bg, fg) = tone.colors(theme.colorScheme);
 
     return Material(
