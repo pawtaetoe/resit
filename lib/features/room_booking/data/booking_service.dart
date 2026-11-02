@@ -3,13 +3,13 @@ import 'dart:convert';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/data/quota.dart';
 
 class BookingService {
   final SessionClient client;
   final AuthService auth;
 
   static const String base = "https://rbs.singaporetech.edu.sg";
-  static const Set<String> roomTypes = {"Discussion Room", "Meeting Room"};
 
   List<Room>? _cachedRooms;
 
@@ -58,7 +58,15 @@ class BookingService {
     final List<dynamic> jsonList = jsonDecode(response.body);
     final allRooms = jsonList.map((e) => Room.fromJson(e)).toList();
 
-    final filtered = allRooms.where((r) => roomTypes.contains(r.rsrcTypName)).toList();
+    // Keep discussion and meeting rooms, matched by the words in the type
+    // name rather than exact text, so naming variants aren't dropped.
+    final filtered = allRooms.where((r) => canonicalRoomType(r.rsrcTypName) != null).toList();
+    final typeCounts = <String, int>{};
+    for (final r in allRooms) {
+      typeCounts[r.rsrcTypName] = (typeCounts[r.rsrcTypName] ?? 0) + 1;
+    }
+    auth.note('Room list: ${allRooms.length} resources, ${filtered.length} bookable. Types: '
+        '${typeCounts.entries.map((e) => '"${e.key}" ×${e.value}').join(', ')}');
     if (search.isEmpty) {
       _cachedRooms = filtered;
     }

@@ -260,7 +260,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   Future<void> _book(RoomWithSlots room) async {
     final summary = _slotSummary;
-    final type = room.room.rsrcTypName;
+    final type = room.room.quotaType;
     final quota = weeklyQuotaFor(ref, _date);
     final quotaNote = quota == null || !quotaRoomTypes.contains(type)
         ? null
@@ -515,7 +515,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     }
 
     final quota = weeklyQuotaFor(ref, _date);
-    bool fits(RoomWithSlots r) => quota == null || quota.fits(r.room.rsrcTypName, _duration);
+    bool fits(RoomWithSlots r) => quota == null || quota.fits(r.room.quotaType, _duration);
 
     final q = _filter.toLowerCase();
     final shown = (q.isEmpty
@@ -553,7 +553,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   Widget _roomTile(RoomWithSlots rm, bool canBook, WeeklyQuota? quota) {
     final scheme = Theme.of(context).colorScheme;
-    final type = rm.room.rsrcTypName;
+    final type = rm.room.quotaType;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Card(
@@ -568,7 +568,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text([
-                if (type.isNotEmpty) type,
+                if (rm.room.rsrcTypName.isNotEmpty) rm.room.rsrcTypName,
                 if (rm.room.capacity > 0) 'Seats ${rm.room.capacity}',
               ].join(' · ')),
               if (!canBook && quota != null)

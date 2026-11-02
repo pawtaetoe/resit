@@ -103,6 +103,13 @@ class AuthService {
   @visibleForTesting
   Future<void> Function(Duration) sleep = (d) => Future<void>.delayed(d);
 
+  /// Adds a line to [signInLog] from elsewhere in the app (e.g. what the room
+  /// list contained), for troubleshooting.
+  void note(String message) {
+    debugLog(message);
+    _record(message);
+  }
+
   /// Called whenever the session flips between signed-in and signed-out.
   void Function(bool active)? onSessionChanged;
 
