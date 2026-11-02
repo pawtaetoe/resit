@@ -45,5 +45,6 @@ app.*.map.json
 /android/app/release
 android/key.properties
 *.jks 
+keys/*
 
 .last_build_id
