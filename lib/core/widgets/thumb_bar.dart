@@ -30,45 +30,53 @@ class ThumbBar extends StatelessWidget {
       color: scheme.surfaceContainer,
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (caption != null) ...[
-                DefaultTextStyle.merge(
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(color: scheme.onSurfaceVariant),
-                  child: caption!,
-                ),
-                const SizedBox(height: 8),
-              ],
-              SizedBox(
-                height: height,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (canPop)
-                      SizedBox.square(
-                        dimension: height,
-                        child: IconButton.filledTonal(
-                          tooltip: 'Back',
-                          iconSize: 24,
-                          // Same rounded square as the bar's buttons.
-                          style: IconButton.styleFrom(
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          onPressed: () => Navigator.of(context).maybePop(),
-                          icon: const Icon(Icons.arrow_back),
-                        ),
-                      ),
-                    if (canPop && child != null) const SizedBox(width: 12),
-                    if (child != null) Expanded(child: child!),
+        // On wide screens the controls stop at 640 px and centre, rather than
+        // stretching a button across a desktop window.
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (caption != null) ...[
+                    DefaultTextStyle.merge(
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(color: scheme.onSurfaceVariant),
+                      child: caption!,
+                    ),
+                    const SizedBox(height: 8),
                   ],
-                ),
+                  SizedBox(
+                    height: height,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (canPop)
+                          SizedBox.square(
+                            dimension: height,
+                            child: IconButton.filledTonal(
+                              tooltip: 'Back',
+                              iconSize: 24,
+                              // Same rounded square as the bar's buttons.
+                              style: IconButton.styleFrom(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              icon: const Icon(Icons.arrow_back),
+                            ),
+                          ),
+                        if (canPop && child != null) const SizedBox(width: 12),
+                        if (child != null) Expanded(child: child!),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

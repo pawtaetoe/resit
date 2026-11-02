@@ -145,26 +145,32 @@ class OverviewGrid extends ConsumerWidget {
             onTap: () => _setGraduation(context, ref, graduation),
           ));
 
-    // Pairs of tiles; the two in a row share the taller one's height, so
-    // captions of different lengths don't leave the cards misaligned. A
-    // leftover tile at the end spans the full width.
+    // Rows of tiles (two on a phone, three on wider screens); tiles in a
+    // row share the tallest one's height, so captions of different lengths
+    // don't leave the cards misaligned. A short last row spreads its tiles
+    // across the full width.
     const gap = 8.0;
-    return Column(
-      children: [
-        for (var i = 0; i < tiles.length; i += 2) ...[
-          if (i > 0) const SizedBox(height: gap),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: tiles[i]),
-                if (i + 1 < tiles.length) ...[const SizedBox(width: gap), Expanded(child: tiles[i + 1])],
-              ],
+    return LayoutBuilder(builder: (context, constraints) {
+      final perRow = constraints.maxWidth >= 600 ? 3 : 2;
+      return Column(
+        children: [
+          for (var i = 0; i < tiles.length; i += perRow) ...[
+            if (i > 0) const SizedBox(height: gap),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var j = i; j < i + perRow && j < tiles.length; j++) ...[
+                    if (j > i) const SizedBox(width: gap),
+                    Expanded(child: tiles[j]),
+                  ],
+                ],
+              ),
             ),
-          ),
+          ],
         ],
-      ],
-    );
+      );
+    });
   }
 }
 
