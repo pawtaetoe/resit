@@ -4,8 +4,13 @@ import 'package:flutter/material.dart';
 /// actions sit where a thumb reaches when the phone is held in one hand.
 /// Shows a back button when there's somewhere to go back to, then [child].
 class ThumbBar extends StatelessWidget {
-  /// Every control in the bar is this tall, so back and the actions line up.
+  /// Every control in the bar is this tall (at normal text size), so back
+  /// and the actions line up.
   static const height = 52.0;
+
+  /// The bar's control height for the user's text size: it grows with larger
+  /// system fonts (up to 80 px) so labels aren't clipped.
+  static double heightOf(BuildContext context) => MediaQuery.textScalerOf(context).scale(height).clamp(height, 80.0);
 
   final Widget? child;
 
@@ -19,6 +24,7 @@ class ThumbBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final canPop = Navigator.of(context).canPop();
+    final height = heightOf(context);
 
     return Material(
       color: scheme.surfaceContainer,
@@ -94,7 +100,7 @@ class ThumbToggle<T> extends StatelessWidget {
     final radius = BorderRadius.circular(12);
 
     return Container(
-      height: ThumbBar.height,
+      height: ThumbBar.heightOf(context),
       decoration: BoxDecoration(border: Border.all(color: scheme.outline), borderRadius: radius),
       child: ClipRRect(
         borderRadius: radius,

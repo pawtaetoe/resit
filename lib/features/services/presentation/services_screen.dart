@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/providers.dart';
+import 'package:intl/intl.dart';
 import 'package:resit/core/ui/app_theme.dart';
+import 'package:resit/features/calendar/data/academic_calendar.dart';
+import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
+import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
@@ -26,13 +30,14 @@ class ServicesScreen extends ConsumerWidget {
           children: [
             Text('reSIT', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(
-              'Rooms and classes at SIT, in one place.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
+            // Where we are in the trimester, at a glance; tap for the calendar.
+            _WeekLine(onTap: () => _open(context, const AcademicCalendarScreen())),
+            const SizedBox(height: 16),
+            // Only shown when there's something to act on (not signed in yet,
+            // or signing in); when all is well it stays out of the way.
             const _SessionBanner(),
-            const SizedBox(height: 24),
+            const _NextBookingCard(),
+            const SizedBox(height: 16),
             const _SectionLabel('Room booking'),
             _TaskTile(
               icon: Icons.add_business_outlined,
@@ -62,6 +67,13 @@ class ServicesScreen extends ConsumerWidget {
               subtitle: 'Grades and GPA for each term',
               onTap: () => _open(context, const ExamResultsScreen()),
             ),
+            const SizedBox(height: 8),
+            _TaskTile(
+              icon: Icons.calendar_month_outlined,
+              title: 'Academic calendar',
+              subtitle: 'Term dates, recess, finals and holidays',
+              onTap: () => _open(context, const AcademicCalendarScreen()),
+            ),
           ],
         ),
       ),
@@ -79,6 +91,7 @@ class _SessionBanner extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final signedIn = ref.watch(authStateProvider);
     final restoring = ref.watch(sessionRestoringProvider);
+    if (signedIn) return const SizedBox.shrink();
 
     final (Tone tone, IconData icon, String title, String message) = signedIn
         ? (Tone.success, Icons.verified_user_outlined, 'Signed in', 'You can book rooms and view your timetable.')
@@ -161,6 +174,71 @@ class _TaskTile extends StatelessWidget {
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
+      ),
+    );
+  }
+}
+
+/// "Week 10 · Trimester 1 · Study week" from SIT's academic calendar, or a
+/// tagline until the calendar has loaded.
+class _WeekLine extends ConsumerWidget {
+  final VoidCallback onTap;
+  const _WeekLine({required this.onTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final p = ref.watch(todayInCalendarProvider);
+    if (p == null) {
+      return Text('Rooms, classes and results at SIT, in one place.',
+          style: theme.textTheme.bodyMedium?.copyWith(color: muted));
+    }
+    final text = p.week.phase == WeekPhase.study
+        ? 'Week ${p.week.number} · ${p.term.name}'
+        : 'Week ${p.week.number} · ${p.term.name} · ${phaseLabel(p.week.phase)}';
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ActionChip(
+        avatar: const Icon(Icons.calendar_month_outlined, size: 18),
+        label: Text(text),
+        onPressed: onTap,
+        tooltip: 'Open the academic calendar',
+      ),
+    );
+  }
+}
+
+/// The next confirmed room booking, so it's visible without opening
+/// My bookings. Hidden when there's none or while loading.
+class _NextBookingCard extends ConsumerWidget {
+  const _NextBookingCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final booking = ref.watch(nextBookingProvider).valueOrNull;
+    if (booking == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final start = bookingStart(booking);
+    final now = DateTime.now();
+    final when = start == null
+        ? '${booking.date}, ${booking.timeRange}'
+        : '${DateUtils.isSameDay(start, now) ? 'Today' : DateUtils.isSameDay(start, now.add(const Duration(days: 1))) ? 'Tomorrow' : DateFormat('EEE d MMM').format(start)}'
+            ', ${booking.timeRange.replaceAll('-', ' – ')}';
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Card(
+        color: theme.colorScheme.secondaryContainer,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ManageBookingScreen())),
+          leading: Icon(Icons.event_available, color: theme.colorScheme.onSecondaryContainer),
+          title: Text('Next booking: ${booking.roomName}',
+              style: TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSecondaryContainer)),
+          subtitle: Text(when, style: TextStyle(color: theme.colorScheme.onSecondaryContainer)),
+          trailing: Icon(Icons.chevron_right, color: theme.colorScheme.onSecondaryContainer),
+        ),
       ),
     );
   }

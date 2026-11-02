@@ -7,6 +7,7 @@ import 'package:resit/core/auth/totp.dart';
 import 'package:resit/features/room_booking/data/booking_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
@@ -88,4 +89,39 @@ final totpConfigProvider = FutureProvider<TotpConfig?>((ref) async {
 
 final examServiceProvider = Provider<ExamService>((ref) {
   return ExamService(ref.watch(authServiceProvider));
+});
+
+final academicCalendarServiceProvider = Provider<AcademicCalendarService>((ref) => AcademicCalendarService());
+
+/// SIT's academic calendar (saved copy if fresh, otherwise fetched). Kept for
+/// the app's lifetime; invalidate to re-check.
+final academicCalendarProvider = FutureProvider<AcademicCalendar>((ref) {
+  return ref.watch(academicCalendarServiceProvider).load();
+});
+
+/// Where today sits in the academic calendar, or null if unknown yet.
+final todayInCalendarProvider = Provider<CalendarPosition?>((ref) {
+  return ref.watch(academicCalendarProvider).valueOrNull?.positionOf(DateTime.now());
+});
+
+/// The next confirmed room booking that hasn't ended yet, for Home. Null when
+/// signed out or there's none. Invalidate after booking or cancelling.
+final nextBookingProvider = FutureProvider.autoDispose<Booking?>((ref) async {
+  if (!ref.watch(authStateProvider)) return null;
+  final bookings = await ref.watch(bookingServiceProvider).getBookings(bookingStatus: 'current');
+  final now = DateTime.now();
+  Booking? next;
+  DateTime? nextStart;
+  for (final b in bookings) {
+    if (b.status.toLowerCase() != 'confirmed') continue;
+    final start = bookingStart(b);
+    if (start == null) continue;
+    final end = start.add(Duration(minutes: bookingMinutes(b)));
+    if (end.isBefore(now)) continue;
+    if (nextStart == null || start.isBefore(nextStart)) {
+      next = b;
+      nextStart = start;
+    }
+  }
+  return next;
 });

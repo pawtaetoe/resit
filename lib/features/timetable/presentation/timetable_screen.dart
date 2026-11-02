@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
+import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
@@ -370,8 +371,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
 
     // MFA from in4SIT's own sign-in, or from the automatic sign-in retry.
     final sessionState = ref.watch(sessionControllerProvider);
-    final challenge =
-        _mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
+    final challenge = _mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
     if (challenge != null && loading) {
       return Center(
         child: Padding(
@@ -422,7 +422,13 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       appBar: thumbAppBar(
         'Timetable',
         subtitle: Text(
-          thisWeek ? 'This week · ${_weekLabel(monday)}' : _weekLabel(monday),
+          [
+            if (thisWeek) 'This week',
+            // The academic week for the shown week, from SIT's calendar.
+            if (ref.watch(academicCalendarProvider).valueOrNull?.positionOf(monday) case final p?)
+              'Week ${p.week.number}${p.week.phase == WeekPhase.study ? '' : ' (${phaseLabel(p.week.phase).toLowerCase()})'}',
+            _weekLabel(monday),
+          ].join(' · '),
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ),

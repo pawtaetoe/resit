@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -381,6 +382,8 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     if (booked != true || !mounted) return;
 
     ref.invalidate(quotaDataProvider);
+    ref.invalidate(nextBookingProvider);
+    HapticFeedback.mediumImpact();
     setState(() => _rooms?.remove(room));
     showSuccess(
       context,
@@ -433,7 +436,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           const SizedBox(height: 20),
           _buildTypeSection(),
           const SizedBox(height: 16),
-          QuotaCard(day: _date),
+          QuotaSummary(day: _date),
           const SizedBox(height: 24),
           SizedBox(key: _resultsKey),
           ..._buildResults(),
