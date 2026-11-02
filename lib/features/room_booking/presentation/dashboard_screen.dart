@@ -95,6 +95,13 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   StreamSubscription<RoomCheck>? _searchSub;
   String? _error;
   bool _errorIsSession = false;
+
+  /// Every room the school lists, and the room types picked in the filter.
+  /// Discussion and meeting rooms are picked by default.
+  List<Room>? _allRooms;
+  Set<String> _types = {};
+  bool _loadingRooms = false;
+  String? _roomsError;
   String _filter = '';
   final _resultsKey = GlobalKey();
 
@@ -112,7 +119,41 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       _startMin = earliest < 13 * 60 ? 13 * 60 : earliest;
     }
     _duration = _validDurations().contains(120) ? 120 : _validDurations().last;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadRooms());
   }
+
+  /// Loads the room list so the type filter can show every type there is.
+  Future<List<Room>> _loadRooms() async {
+    final cached = _allRooms;
+    if (cached != null) return cached;
+    setState(() {
+      _loadingRooms = true;
+      _roomsError = null;
+    });
+    try {
+      final rooms = await ref.read(bookingServiceProvider).getRooms();
+      if (mounted) {
+        setState(() {
+          _allRooms = rooms;
+          final types = rooms.map((r) => r.rsrcTypName).where((t) => t.isNotEmpty).toSet();
+          final defaults = types.where((t) => canonicalRoomType(t) != null).toSet();
+          // Default to discussion and meeting rooms; if the school names them
+          // in a way that isn't recognised, start with everything.
+          _types = defaults.isNotEmpty ? defaults : types;
+        });
+      }
+      return rooms;
+    } catch (e) {
+      if (mounted) setState(() => _roomsError = friendlyError(e));
+      rethrow;
+    } finally {
+      if (mounted) setState(() => _loadingRooms = false);
+    }
+  }
+
+  /// Whether every picked room type has a weekly allowance; only then do the
+  /// hours left limit the length that can be picked.
+  bool get _onlyQuotaTypes => _types.isNotEmpty && _types.every((t) => canonicalRoomType(t) != null);
 
   DateTime _today() {
     final now = DateTime.now();
@@ -195,7 +236,8 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
     try {
       final service = ref.read(bookingServiceProvider);
-      final rooms = only ?? await service.getRooms();
+      final all = await _loadRooms();
+      final rooms = only ?? all.where((r) => _types.contains(r.rsrcTypName)).toList();
       if (!mounted) return;
       setState(() => _total = rooms.length);
       if (only == null) _revealResults();
@@ -297,7 +339,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final quota = weeklyQuotaFor(ref, _date);
-    final maxLeft = _maxLeft(quota);
+    // Other room types (e.g. lecture rooms) have no weekly allowance, so the
+    // hours left only limit the length when just DR/MR are being searched.
+    final maxLeft = _onlyQuotaTypes ? _maxLeft(quota) : null;
     final overQuota = maxLeft != null && _duration > maxLeft;
 
     return Scaffold(
@@ -322,6 +366,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
               style: TextStyle(color: theme.colorScheme.error),
             ),
           ],
+          const SizedBox(height: 20),
+          _label(context, 'Room types'),
+          _buildTypeFilter(),
           const SizedBox(height: 16),
           QuotaCard(day: _date),
           const SizedBox(height: 24),
@@ -343,7 +390,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
             ),
             const SizedBox(height: 6),
             BusyButton(
-              onPressed: _startOptions().isEmpty || overQuota ? null : _search,
+              onPressed: _startOptions().isEmpty || overQuota || (_allRooms != null && _types.isEmpty) ? null : _search,
               busy: _searching,
               icon: Icons.search,
               label: 'Find free rooms',
@@ -415,6 +462,55 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       menuMaxHeight: 320,
       items: [for (final m in options) DropdownMenuItem(value: m, child: Text(_hhmm(m)))],
       onChanged: _searching ? null : (m) => _changeSearch(() => _startMin = m!),
+    );
+  }
+
+  Widget _buildTypeFilter() {
+    final theme = Theme.of(context);
+    final rooms = _allRooms;
+    if (rooms == null) {
+      if (_roomsError != null) {
+        return Row(
+          children: [
+            Expanded(child: Text("Couldn't load the room types.", style: theme.textTheme.bodySmall)),
+            TextButton(onPressed: _loadRooms, child: const Text('Retry')),
+          ],
+        );
+      }
+      return Text(
+        _loadingRooms ? 'Loading room types…' : 'Discussion and meeting rooms',
+        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      );
+    }
+
+    final counts = <String, int>{};
+    for (final r in rooms) {
+      if (r.rsrcTypName.isNotEmpty) counts[r.rsrcTypName] = (counts[r.rsrcTypName] ?? 0) + 1;
+    }
+    // Discussion and meeting rooms first, then the rest by name.
+    final types = counts.keys.toList()
+      ..sort((a, b) {
+        final qa = canonicalRoomType(a) != null ? 0 : 1;
+        final qb = canonicalRoomType(b) != null ? 0 : 1;
+        return qa != qb ? qa.compareTo(qb) : a.compareTo(b);
+      });
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final t in types)
+          FilterChip(
+            label: Text('$t (${counts[t]})'),
+            selected: _types.contains(t),
+            onSelected: _searching
+                ? null
+                : (on) => _changeSearch(() {
+                      _types = {..._types};
+                      on ? _types.add(t) : _types.remove(t);
+                    }),
+          ),
+      ],
     );
   }
 
@@ -515,7 +611,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     }
 
     final quota = weeklyQuotaFor(ref, _date);
-    bool fits(RoomWithSlots r) => quota == null || quota.fits(r.room.quotaType, _duration);
+    // Only discussion and meeting rooms count against the weekly hours.
+    bool fits(RoomWithSlots r) =>
+        quota == null || !quotaRoomTypes.contains(r.room.quotaType) || quota.fits(r.room.quotaType, _duration);
 
     final q = _filter.toLowerCase();
     final shown = (q.isEmpty

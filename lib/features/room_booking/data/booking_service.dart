@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
-import 'package:resit/features/room_booking/data/quota.dart';
 
 class BookingService {
   final SessionClient client;
@@ -58,19 +57,18 @@ class BookingService {
     final List<dynamic> jsonList = jsonDecode(response.body);
     final allRooms = jsonList.map((e) => Room.fromJson(e)).toList();
 
-    // Keep discussion and meeting rooms, matched by the words in the type
-    // name rather than exact text, so naming variants aren't dropped.
-    final filtered = allRooms.where((r) => canonicalRoomType(r.rsrcTypName) != null).toList();
+    // Every type of room is returned; the search screen filters by type,
+    // with discussion and meeting rooms selected by default.
     final typeCounts = <String, int>{};
     for (final r in allRooms) {
       typeCounts[r.rsrcTypName] = (typeCounts[r.rsrcTypName] ?? 0) + 1;
     }
-    auth.note('Room list: ${allRooms.length} resources, ${filtered.length} bookable. Types: '
+    auth.note('Room list: ${allRooms.length} rooms. Types: '
         '${typeCounts.entries.map((e) => '"${e.key}" ×${e.value}').join(', ')}');
     if (search.isEmpty) {
-      _cachedRooms = filtered;
+      _cachedRooms = allRooms;
     }
-    return filtered;
+    return allRooms;
   }
 
   Future<List<RoomWithSlots>> checkAvailability(List<Room> rooms, String date, String startTime, String endTime) async {
