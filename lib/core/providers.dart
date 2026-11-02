@@ -7,6 +7,7 @@ import 'package:resit/core/auth/totp.dart';
 import 'package:resit/features/room_booking/data/booking_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
 final secureStorageProvider = Provider<SecureStorage>((ref) {
@@ -83,4 +84,8 @@ final totpConfigProvider = FutureProvider<TotpConfig?>((ref) async {
   } catch (_) {
     return null;
   }
+});
+
+final examServiceProvider = Provider<ExamService>((ref) {
+  return ExamService(ref.watch(authServiceProvider));
 });
