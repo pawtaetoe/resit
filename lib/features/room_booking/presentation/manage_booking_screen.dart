@@ -8,6 +8,7 @@ import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
+import 'package:resit/features/room_booking/presentation/quota_card.dart';
 
 /// My bookings: upcoming (confirmed) and past bookings, with cancel.
 class ManageBookingScreen extends StatelessWidget {
@@ -145,7 +146,8 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
     try {
       await ref.read(bookingServiceProvider).cancelBooking(booking.cancelId);
       if (!mounted) return;
-      showSuccess(context, 'Booking for ${booking.roomName} cancelled.');
+      ref.invalidate(quotaDataProvider);
+      showSuccess(context, 'Booking for ${booking.roomName} cancelled. Its hours are back in your weekly allowance.');
       await _fetchBookings();
     } catch (e) {
       if (mounted) showError(context, "Couldn't cancel: ${friendlyError(e)}");
@@ -155,6 +157,11 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
   }
 
   final Set<String> _cancelling = {};
+
+  Future<void> _refresh() {
+    ref.invalidate(quotaDataProvider);
+    return _fetchBookings();
+  }
 
   void _copyRef(String ref) {
     Clipboard.setData(ClipboardData(text: ref));
@@ -229,9 +236,10 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
     }
 
     final bookings = _bookings ?? const <Booking>[];
+    final showQuota = _tab == _Tab.upcoming;
     if (bookings.isEmpty) {
       return RefreshIndicator(
-        onRefresh: _fetchBookings,
+        onRefresh: _refresh,
         child: LayoutBuilder(
           builder: (context, constraints) => SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -261,18 +269,22 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
     }
 
     return RefreshIndicator(
-      onRefresh: _fetchBookings,
+      onRefresh: _refresh,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        itemCount: bookings.length,
+        itemCount: bookings.length + (showQuota ? 1 : 0),
         separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, i) => _BookingCard(
-          booking: bookings[i],
-          cancelling: _cancelling.contains(bookings[i].bookingRef),
-          onCancel: () => _cancel(bookings[i]),
-          onCopyRef: () => _copyRef(bookings[i].bookingRef),
-        ),
+        itemBuilder: (context, index) {
+          if (showQuota && index == 0) return QuotaCard(day: DateTime.now());
+          final i = index - (showQuota ? 1 : 0);
+          return _BookingCard(
+            booking: bookings[i],
+            cancelling: _cancelling.contains(bookings[i].bookingRef),
+            onCancel: () => _cancel(bookings[i]),
+            onCopyRef: () => _copyRef(bookings[i].bookingRef),
+          );
+        },
       ),
     );
   }

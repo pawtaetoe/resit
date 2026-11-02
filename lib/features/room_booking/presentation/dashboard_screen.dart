@@ -5,7 +5,9 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
+import 'package:resit/features/room_booking/presentation/quota_card.dart';
 
 /// Book a room: pick a day, a start time and a length, then choose from the
 /// rooms free for the whole slot.
@@ -132,8 +134,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   String get _apiDate => DateFormat('d MMM yyyy').format(_date);
 
-  String get _slotSummary =>
-      '${DateFormat('EEE d MMM').format(_date)} · ${_hhmm(_startMin)} – ${_hhmm(_endMin)}';
+  String get _slotSummary => '${DateFormat('EEE d MMM').format(_date)} · ${_hhmm(_startMin)} – ${_hhmm(_endMin)}';
 
   /// Any change to the search makes old results misleading, so clear them.
   void _changeSearch(VoidCallback change) {
@@ -183,14 +184,21 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   Future<void> _book(RoomWithSlots room) async {
     final summary = _slotSummary;
+    final type = room.room.rsrcTypName;
+    final quota = weeklyQuotaFor(ref, _date);
+    final quotaNote = quota == null || !quotaRoomTypes.contains(type)
+        ? null
+        : 'Uses ${formatHours(_duration)} of your weekly ${roomTypeLabel(type).toLowerCase()} hours. '
+            '${formatHours(quota.remaining(type) - _duration)} left after this.';
     final booked = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (_) => _ConfirmBookingSheet(room: room, date: _apiDate, slotSummary: summary),
+      builder: (_) => _ConfirmBookingSheet(room: room, date: _apiDate, slotSummary: summary, quotaNote: quotaNote),
     );
     if (booked != true || !mounted) return;
 
+    ref.invalidate(quotaDataProvider);
     setState(() => _rooms?.remove(room));
     showSuccess(
       context,
@@ -205,9 +213,16 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     );
   }
 
+  /// Most hours left for any room type in the selected week (null = unknown).
+  int? _maxLeft(WeeklyQuota? quota) =>
+      quota == null ? null : quotaRoomTypes.map(quota.remaining).reduce((a, b) => a > b ? a : b);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final quota = weeklyQuotaFor(ref, _date);
+    final maxLeft = _maxLeft(quota);
+    final overQuota = maxLeft != null && _duration > maxLeft;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Book a room')),
@@ -221,8 +236,19 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           _buildStartPicker(),
           const SizedBox(height: 20),
           _label(context, 'How long'),
-          _buildDurationPicker(),
-          const SizedBox(height: 20),
+          _buildDurationPicker(maxLeft),
+          if (overQuota) ...[
+            const SizedBox(height: 8),
+            Text(
+              maxLeft == 0
+                  ? "You've used all your booking hours for this week. Pick a day in another week."
+                  : 'Only ${formatHours(maxLeft)} left this week. Pick a shorter time.',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ],
+          const SizedBox(height: 16),
+          QuotaCard(day: _date),
+          const SizedBox(height: 12),
           Card(
             color: theme.colorScheme.secondaryContainer,
             child: Padding(
@@ -243,7 +269,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           ),
           const SizedBox(height: 12),
           BusyButton(
-            onPressed: _startOptions().isEmpty ? null : _search,
+            onPressed: _startOptions().isEmpty || overQuota ? null : _search,
             busy: _searching,
             icon: Icons.search,
             label: 'Find free rooms',
@@ -279,7 +305,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
         itemBuilder: (context, i) {
           final d = days[i];
           final diff = d.difference(today).inDays;
-          final top = diff == 0 ? 'Today' : diff == 1 ? 'Tmrw' : DateFormat('EEE').format(d);
+          final top = diff == 0
+              ? 'Today'
+              : diff == 1
+                  ? 'Tmrw'
+                  : DateFormat('EEE').format(d);
           final selected = d == _date;
           final scheme = Theme.of(context).colorScheme;
           return ChoiceChip(
@@ -315,8 +345,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     );
   }
 
-  Widget _buildDurationPicker() {
-    final valid = _validDurations();
+  Widget _buildDurationPicker(int? maxLeft) {
+    // Lengths past closing time or beyond the weekly hours left can't be picked.
+    final valid = _validDurations().where((d) => maxLeft == null || d <= maxLeft).toList();
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -325,7 +356,6 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           ChoiceChip(
             label: Text(_durationLabel(d)),
             selected: d == _duration,
-            // Lengths that would run past closing time can't be picked.
             onSelected: !_searching && valid.contains(d) ? (_) => _changeSearch(() => _duration = d) : null,
           ),
       ],
@@ -367,10 +397,15 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       ];
     }
 
+    final quota = weeklyQuotaFor(ref, _date);
+    bool fits(RoomWithSlots r) => quota == null || quota.fits(r.room.rsrcTypName, _duration);
+
     final q = _filter.toLowerCase();
-    final shown = q.isEmpty
-        ? rooms
-        : rooms.where((r) => '${r.room.rsrcName} ${r.room.rsrcTypName}'.toLowerCase().contains(q)).toList();
+    final shown = (q.isEmpty
+        ? [...rooms]
+        : rooms.where((r) => '${r.room.rsrcName} ${r.room.rsrcTypName}'.toLowerCase().contains(q)).toList())
+      // Rooms you can still book come first.
+      ..sort((a, b) => (fits(a) ? 0 : 1).compareTo(fits(b) ? 0 : 1));
     final theme = Theme.of(context);
 
     return [
@@ -395,30 +430,44 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           padding: const EdgeInsets.all(16),
           child: Text('No rooms match "$_filter".', textAlign: TextAlign.center),
         ),
-      for (final rm in shown)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Card(
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              onTap: () => _book(rm),
-              contentPadding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
-              leading: const Icon(Icons.meeting_room_outlined),
-              title: Text(rm.room.rsrcName, style: const TextStyle(fontWeight: FontWeight.w600)),
-              subtitle: Text(
-                [
-                  if (rm.room.rsrcTypName.isNotEmpty) rm.room.rsrcTypName,
-                  if (rm.room.capacity > 0) 'Seats ${rm.room.capacity}',
-                ].join(' · '),
-              ),
-              trailing: FilledButton.tonal(
-                onPressed: () => _book(rm),
-                child: const Text('Book'),
-              ),
-            ),
+      for (final rm in shown) _roomTile(rm, fits(rm), quota),
+    ];
+  }
+
+  Widget _roomTile(RoomWithSlots rm, bool canBook, WeeklyQuota? quota) {
+    final scheme = Theme.of(context).colorScheme;
+    final type = rm.room.rsrcTypName;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          enabled: canBook,
+          onTap: () => _book(rm),
+          contentPadding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+          leading: const Icon(Icons.meeting_room_outlined),
+          title: Text(rm.room.rsrcName, style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text([
+                if (type.isNotEmpty) type,
+                if (rm.room.capacity > 0) 'Seats ${rm.room.capacity}',
+              ].join(' · ')),
+              if (!canBook && quota != null)
+                Text(
+                  'Weekly limit: ${formatHours(quota.remaining(type))} of ${roomTypeLabel(type).toLowerCase()} left',
+                  style: TextStyle(color: scheme.error),
+                ),
+            ],
+          ),
+          trailing: FilledButton.tonal(
+            onPressed: canBook ? () => _book(rm) : null,
+            child: const Text('Book'),
           ),
         ),
-    ];
+      ),
+    );
   }
 }
 
@@ -427,8 +476,9 @@ class _ConfirmBookingSheet extends ConsumerStatefulWidget {
   final RoomWithSlots room;
   final String date;
   final String slotSummary;
+  final String? quotaNote;
 
-  const _ConfirmBookingSheet({required this.room, required this.date, required this.slotSummary});
+  const _ConfirmBookingSheet({required this.room, required this.date, required this.slotSummary, this.quotaNote});
 
   @override
   ConsumerState<_ConfirmBookingSheet> createState() => _ConfirmBookingSheetState();
@@ -487,6 +537,7 @@ class _ConfirmBookingSheetState extends ConsumerState<_ConfirmBookingSheet> {
             row(Icons.meeting_room_outlined, room.rsrcName),
             row(Icons.schedule, widget.slotSummary),
             if (room.capacity > 0) row(Icons.groups_outlined, 'Seats ${room.capacity}'),
+            if (widget.quotaNote != null) row(Icons.hourglass_bottom, widget.quotaNote!),
             if (disclaimer.isNotEmpty && disclaimer.toUpperCase() != 'N.A') ...[
               const SizedBox(height: 4),
               Text(disclaimer, style: theme.textTheme.bodySmall),

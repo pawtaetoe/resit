@@ -272,6 +272,23 @@ class BookingService {
     return rawList.map((e) => Booking.fromList(List<dynamic>.from(e))).toList();
   }
 
+  /// Every booking that might count toward the weekly quota: current ones
+  /// plus history (past bookings earlier in the same week still count).
+  Future<List<Booking>> getQuotaBookings() async {
+    final current = await getBookings(bookingStatus: 'current');
+    List<Booking> history = const [];
+    try {
+      history = await getBookings(bookingStatus: 'history');
+    } catch (_) {
+      // History is optional; current bookings are the bulk of it.
+    }
+    final byRef = <String, Booking>{};
+    for (final b in [...history, ...current]) {
+      byRef[b.bookingRef.isEmpty ? '${b.roomName}|${b.date}|${b.timeRange}' : b.bookingRef] = b;
+    }
+    return byRef.values.toList();
+  }
+
   Future<void> cancelBooking(String cancelId) async {
     final csrfToken = await auth.getCsrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
