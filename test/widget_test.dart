@@ -23,6 +23,8 @@ void main() {
     expect(find.text('Not signed in'), findsOneWidget);
     expect(find.text('Book a room'), findsOneWidget);
     expect(find.text('My bookings'), findsOneWidget);
+    // Further down Home, below the overview.
+    await tester.scrollUntilVisible(find.text('Timetable'), 200);
     expect(find.text('Timetable'), findsOneWidget);
   });
 

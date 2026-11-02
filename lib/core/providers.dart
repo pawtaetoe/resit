@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/auth/auth_service.dart';
@@ -8,6 +9,7 @@ import 'package:resit/features/room_booking/data/booking_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
+import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
@@ -124,4 +126,27 @@ final nextBookingProvider = FutureProvider.autoDispose<Booking?>((ref) async {
     }
   }
   return next;
+});
+
+final academicRecordServiceProvider = Provider<AcademicRecordService>((ref) {
+  return AcademicRecordService(ref.watch(examServiceProvider));
+});
+
+/// The last saved academic record, shown straight away on Home.
+final savedAcademicRecordProvider = FutureProvider<AcademicRecord?>((ref) {
+  return ref.watch(academicRecordServiceProvider).saved();
+});
+
+/// The academic record, re-read from in4SIT at most once a day while signed
+/// in. Until it arrives, Home shows [savedAcademicRecordProvider].
+final academicRecordProvider = FutureProvider<AcademicRecord?>((ref) async {
+  if (!ref.watch(authStateProvider)) return ref.watch(academicRecordServiceProvider).saved();
+  return ref.watch(academicRecordServiceProvider).load();
+});
+
+/// The graduation date the user set on Home, if any.
+final graduationDateProvider = FutureProvider<DateTime?>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final ms = prefs.getInt('graduation_date');
+  return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
 });

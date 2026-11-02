@@ -123,6 +123,20 @@ class AcademicCalendar {
     return null;
   }
 
+  /// The first week, in date order, that hasn't ended by [day] and matches
+  /// [test]. The week containing [day] counts.
+  (AcademicTerm, AcademicWeek)? nextWeekWhere(DateTime day, bool Function(AcademicWeek week) test) {
+    final d = DateTime(day.year, day.month, day.day);
+    (AcademicTerm, AcademicWeek)? best;
+    for (final (_, t) in _terms) {
+      for (final w in t.weeks) {
+        if (w.end.isBefore(d) || !test(w)) continue;
+        if (best == null || w.start.isBefore(best.$2.start)) best = (t, w);
+      }
+    }
+    return best;
+  }
+
   /// The first trimester starting after [day], for gaps between terms.
   (AcademicYear, AcademicTerm)? nextTermAfter(DateTime day) {
     for (final (y, t) in _terms) {

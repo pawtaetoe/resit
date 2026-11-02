@@ -3,9 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/providers.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/ui/app_theme.dart';
-import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/services/presentation/overview_grid.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
@@ -30,14 +30,20 @@ class ServicesScreen extends ConsumerWidget {
           children: [
             Text('reSIT', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            // Where we are in the trimester, at a glance; tap for the calendar.
-            _WeekLine(onTap: () => _open(context, const AcademicCalendarScreen())),
+            Text(
+              'Rooms, classes and results at SIT, in one place.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
             const SizedBox(height: 16),
             // Only shown when there's something to act on (not signed in yet,
             // or signing in); when all is well it stays out of the way.
             const _SessionBanner(),
             const _NextBookingCard(),
             const SizedBox(height: 16),
+            // At a glance: trimester week, countdowns, credits, GPA, graduation.
+            const _SectionLabel('Overview'),
+            const OverviewGrid(),
+            const SizedBox(height: 24),
             const _SectionLabel('Room booking'),
             _TaskTile(
               icon: Icons.add_business_outlined,
@@ -174,36 +180,6 @@ class _TaskTile extends StatelessWidget {
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
-      ),
-    );
-  }
-}
-
-/// "Week 10 · Trimester 1 · Study week" from SIT's academic calendar, or a
-/// tagline until the calendar has loaded.
-class _WeekLine extends ConsumerWidget {
-  final VoidCallback onTap;
-  const _WeekLine({required this.onTap});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final muted = theme.colorScheme.onSurfaceVariant;
-    final p = ref.watch(todayInCalendarProvider);
-    if (p == null) {
-      return Text('Rooms, classes and results at SIT, in one place.',
-          style: theme.textTheme.bodyMedium?.copyWith(color: muted));
-    }
-    final text = p.week.phase == WeekPhase.study
-        ? 'Week ${p.week.number} · ${p.term.name}'
-        : 'Week ${p.week.number} · ${p.term.name} · ${phaseLabel(p.week.phase)}';
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: ActionChip(
-        avatar: const Icon(Icons.calendar_month_outlined, size: 18),
-        label: Text(text),
-        onPressed: onTap,
-        tooltip: 'Open the academic calendar',
       ),
     );
   }

@@ -49,4 +49,14 @@ void main() {
     expect(calendar.positionOf(DateTime(2030, 1, 1)), isNull);
     expect(calendar.nextTermAfter(DateTime(2026, 11, 2))?.$2.start, DateTime(2027, 1, 4));
   });
+
+  test('finds the next week matching a condition', () {
+    final today = DateTime(2026, 11, 2);
+    final finals = calendar.nextWeekWhere(today, (w) => w.phase == WeekPhase.finals)!;
+    expect(finals.$2.start, DateTime(2026, 11, 30));
+    final holiday = calendar.nextWeekWhere(today, (w) => w.hasHoliday)!;
+    expect(holiday.$2.start, DateTime(2026, 11, 2), reason: 'this week (2 Nov - 8 Nov^) counts');
+    final brk = calendar.nextWeekWhere(today, (w) => w.phase == WeekPhase.trimesterBreak)!;
+    expect(brk.$2.start, DateTime(2026, 12, 7));
+  });
 }

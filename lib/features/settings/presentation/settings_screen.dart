@@ -88,6 +88,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     await ref.read(sessionControllerProvider.notifier).signOut(forgetDetails: forget);
     if (forget) {
+      await ref.read(academicRecordServiceProvider).clear();
+      ref.invalidate(savedAcademicRecordProvider);
       ref.invalidate(totpConfigProvider);
       _usernameController.clear();
       _passwordController.clear();
