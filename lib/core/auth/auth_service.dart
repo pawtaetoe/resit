@@ -31,8 +31,7 @@ class SessionExpiredException implements Exception {
   SessionExpiredException([this.detail]);
 
   @override
-  String toString() =>
-      'Session expired.'
+  String toString() => 'Session expired.'
       '${detail != null ? '\n\n$detail' : ''}';
 }
 
@@ -175,8 +174,7 @@ class AuthService {
 
     if (fields == null) {
       final error = _extractError(parser.parse(page));
-      throw Exception(error ??
-          "No wresult found in ADFS reply. Check your Student ID and Password.");
+      throw Exception(error ?? "No wresult found in ADFS reply. Check your Student ID and Password.");
     }
 
     // 4. Replay the ADFS relay form to the callback
@@ -217,7 +215,8 @@ class AuthService {
 
     for (var step = 1;; step++) {
       final doc = parser.parse(page);
-      final form = _pickForm(doc);
+      final code = _findCodeForm(doc);
+      final form = code?.form ?? _pickForm(doc);
       if (form == null) {
         throw MfaException('ADFS MFA page has no form to submit.');
       }
@@ -228,7 +227,7 @@ class AuthService {
       // the page offers a choice.
       final fields = _formFields(form, preferCode: totp != null);
       final number = _extractMfaNumber(doc);
-      final codeInput = _findCodeInput(form);
+      final codeInput = code?.name;
 
       if (step == 1 || codeInput != null) log('MFA page: ${_describeMfaPage(doc, fields)}');
 
@@ -267,11 +266,10 @@ class AuthService {
         if (nextDoc.querySelector('input[type="password"]') != null) {
           throw MfaException(_extractError(nextDoc) ?? 'ADFS rejected the sign-in and went back to the password page.');
         }
-        final nextForm = _pickForm(nextDoc);
         final error = _extractError(nextDoc);
         // A rejected code usually re-shows the code box with an error; try
         // once more with a fresh code, otherwise report the error.
-        if (error != null && (nextForm == null || _findCodeInput(nextForm) == null)) {
+        if (error != null && _findCodeForm(nextDoc) == null) {
           throw MfaException(error);
         }
         if (error != null) {
@@ -305,8 +303,7 @@ class AuthService {
       }
       final resp = await client.post(target, body: fields).timeout(
             remaining,
-            onTimeout: () => throw MfaException(
-                'Timed out waiting for Microsoft Authenticator approval.'),
+            onTimeout: () => throw MfaException('Timed out waiting for Microsoft Authenticator approval.'),
           );
 
       url = resp.request?.url ?? target;
@@ -319,8 +316,7 @@ class AuthService {
 
       final nextDoc = parser.parse(page);
       if (nextDoc.querySelector('input[type="password"]') != null) {
-        throw MfaException(_extractError(nextDoc) ??
-            'ADFS rejected the sign-in and went back to the password page.');
+        throw MfaException(_extractError(nextDoc) ?? 'ADFS rejected the sign-in and went back to the password page.');
       }
       final error = _extractError(nextDoc);
       if (error != null) throw MfaException(error);
@@ -340,19 +336,46 @@ class AuthService {
     }
   }
 
-  /// The name of the box on an MFA page that wants a one-time code, or null.
-  /// Matches by name/id/autocomplete since ADFS adapters name it differently
-  /// (e.g. VerificationCode, otc, Passcode).
+  /// The form and box on an MFA page that want a one-time code, searching
+  /// every form (the code box isn't always in the form [_pickForm] chooses).
+  ({dom.Element form, String name})? _findCodeForm(dom.Document doc) {
+    for (final form in doc.querySelectorAll('form')) {
+      final name = _findCodeInput(form);
+      if (name != null) return (form: form, name: name);
+    }
+    return null;
+  }
+
+  /// The name of the box in [form] that wants a one-time code, or null.
+  /// Matched by name/id/autocomplete since ADFS adapters name it differently
+  /// (e.g. VerificationCode, otc, Passcode), then by code-like hints (numeric
+  /// keyboard, 6-8 character limit), and finally, on a form with exactly one
+  /// visible text box and no password box, that box.
   String? _findCodeInput(dom.Element form) {
     final pattern = RegExp(r'code|otp|otc|token|verification|passcode|pin', caseSensitive: false);
+    final visible = <dom.Element>[];
     for (final input in form.querySelectorAll('input')) {
       final name = input.attributes['name'];
       if (name == null || name.isEmpty) continue;
       final type = (input.attributes['type'] ?? 'text').toLowerCase();
       if (!const {'text', 'tel', 'number', 'password'}.contains(type)) continue;
-      final hints = '${input.attributes['autocomplete'] ?? ''} $name ${input.attributes['id'] ?? ''}';
+      final hints = '${input.attributes['autocomplete'] ?? ''} $name ${input.attributes['id'] ?? ''} '
+          '${input.attributes['placeholder'] ?? ''} ${input.attributes['aria-label'] ?? ''}';
       if (hints.contains('one-time-code') || pattern.hasMatch(hints)) return name;
+      if (type != 'password') visible.add(input);
     }
+
+    for (final input in visible) {
+      final numeric = (input.attributes['inputmode'] ?? '').toLowerCase() == 'numeric' ||
+          (input.attributes['type'] ?? '').toLowerCase() == 'tel' ||
+          (input.attributes['type'] ?? '').toLowerCase() == 'number' ||
+          (input.attributes['pattern'] ?? '').contains(r'\d');
+      final maxLength = int.tryParse(input.attributes['maxlength'] ?? '');
+      if (numeric || (maxLength != null && maxLength >= 6 && maxLength <= 8)) return input.attributes['name'];
+    }
+
+    final hasPassword = form.querySelector('input[type="password"]') != null;
+    if (visible.length == 1 && !hasPassword) return visible.single.attributes['name'];
     return null;
   }
 
@@ -378,8 +401,8 @@ class AuthService {
     final choices = doc
         .querySelectorAll('a, button, label')
         .map((e) => e.text.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((t) => RegExp(r'another way|other|code|verification|authenticator|text|call', caseSensitive: false)
-            .hasMatch(t))
+        .where((t) =>
+            RegExp(r'another way|other|code|verification|authenticator|text|call', caseSensitive: false).hasMatch(t))
         .where((t) => t.length < 80)
         .take(6)
         .join(' / ');
@@ -585,8 +608,7 @@ class AuthService {
     var relay = _extractRelayForm(body, url);
     if (relay == null && _isMfaPage(body)) {
       log('ADFS requires multi-factor authentication.');
-      final mfa = await _completeMfa(url, body,
-          mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge);
+      final mfa = await _completeMfa(url, body, mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge);
       relay = _extractRelayForm(mfa.page, mfa.url);
     }
     if (relay == null) {
@@ -630,8 +652,7 @@ class AuthService {
   }
 
   Future<String?> getCsrfToken() async {
-    final fresh = _lastValidated != null &&
-        DateTime.now().difference(_lastValidated!) < _tokenTtl;
+    final fresh = _lastValidated != null && DateTime.now().difference(_lastValidated!) < _tokenTtl;
     if (_cachedCsrfToken != null && fresh) return _cachedCsrfToken;
 
     final valid = await _validateSession();
@@ -736,9 +757,7 @@ class AuthService {
 
     radios.forEach((name, group) {
       final checked = group.where((r) => r.attributes.containsKey('checked'));
-      final preferred = group.where((r) => RegExp(
-              r'authenticator|notification|approve|push',
-              caseSensitive: false)
+      final preferred = group.where((r) => RegExp(r'authenticator|notification|approve|push', caseSensitive: false)
           .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));
       final codeOption = group.where((r) => RegExp(r'code|otp|otc|verification|token|passcode', caseSensitive: false)
           .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));

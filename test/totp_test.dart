@@ -101,16 +101,17 @@ void main() {
       codesSeen = [];
     });
 
-    Future<AuthService> service({String? totp, bool acceptCode = true}) async {
+    Future<AuthService> service(
+        {String? totp, bool acceptCode = true, String page = codePage, String field = 'VerificationCode'}) async {
       FlutterSecureStorage.setMockInitialValues({if (totp != null) 'mfa_totp_uri': totp});
       final mock = MockClient((request) async {
         final path = request.url.path;
         if (request.method == 'GET') {
           return http.Response('<form><input type="password"></form>', 200, request: request);
         }
-        if (path == '/SRB001/SRB001Page') return http.Response(codePage, 200, request: request);
+        if (path == '/SRB001/SRB001Page') return http.Response(page, 200, request: request);
         if (path == '/adfs/ls/') {
-          final code = request.bodyFields['VerificationCode'];
+          final code = request.bodyFields[field];
           codesSeen.add(code);
           expect(request.bodyFields['Context'], 'ctx');
           final ok = acceptCode && code == config.codeAt(DateTime.now());
@@ -135,6 +136,17 @@ void main() {
       expect(ok, isTrue);
       expect(codesSeen, hasLength(1));
       expect(challenges.single.automatic, isTrue);
+    });
+
+    test('finds a generically named code box by its hints', () async {
+      // One visible box, named generically, with a numeric keyboard hint.
+      final generic = codePage.replaceFirst('<input type="text" name="VerificationCode" autocomplete="off"/>',
+          '<input type="text" name="Response" inputmode="numeric" maxlength="6"/>');
+      final auth = await service(totp: config.toUri(), page: generic, field: 'Response');
+      final ok = await auth.login('2100000', 'pw');
+      auth.dispose();
+      expect(ok, isTrue);
+      expect(codesSeen, hasLength(1));
     });
 
     test('retries once with a fresh code, then reports the rejection', () async {
