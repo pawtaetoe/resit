@@ -119,16 +119,36 @@ void main() {
         </form>
       </div>''';
 
+    // Fake time, so waiting for the next code period doesn't take 30 s.
+    late DateTime fakeNow;
+    late List<Duration> sleeps;
+
     late List<String?> codesSeen;
 
     setUp(() {
+      // Mid-period, so the first code isn't about to expire.
+      fakeNow = DateTime.utc(2026, 11, 2, 8, 0, 10);
+      sleeps = [];
       TestWidgetsFlutterBinding.ensureInitialized();
       SharedPreferences.setMockInitialValues({});
       codesSeen = [];
     });
 
+    // The in-between page SIT shows before the code page: an ADFS form with
+    // no number and no code box.
+    const interstitial = '''
+      <form method="post" id="loginForm" action="/adfs/ls/next">
+        <input type="hidden" name="AuthMethod" value="AzureMfaAuthentication">
+        <input type="hidden" name="Context" value="ctx">
+        <input type="submit" name="Continue" value="Continue">
+      </form>''';
+
     Future<AuthService> service(
-        {String? totp, bool acceptCode = true, String page = codePage, String field = 'VerificationCode'}) async {
+        {String? totp,
+        bool acceptCode = true,
+        String page = codePage,
+        String field = 'VerificationCode',
+        bool withInterstitial = false}) async {
       FlutterSecureStorage.setMockInitialValues({if (totp != null) 'mfa_totp_uri': totp});
       final mock = MockClient((request) async {
         final path = request.url.path;
@@ -136,14 +156,17 @@ void main() {
           return http.Response('<form><input type="password"></form>', 200, request: request);
         }
         final isCode = request.method == 'POST' && request.bodyFields.containsKey(field);
-        if (path == '/SRB001/SRB001Page' && !isCode) return http.Response(page, 200, request: request);
+        if (path == '/SRB001/SRB001Page' && !isCode) {
+          return http.Response(withInterstitial ? interstitial : page, 200, request: request);
+        }
+        if (path == '/adfs/ls/next' && !isCode) return http.Response(page, 200, request: request);
         // Codes go to the form's action, or back to the page itself when the
         // form has none (as on SIT's page).
         if (isCode) {
           final code = request.bodyFields[field];
           codesSeen.add(code);
           expect(request.bodyFields['Context'], 'ctx');
-          final ok = acceptCode && code == config.codeAt(DateTime.now());
+          final ok = acceptCode && code == config.codeAt(fakeNow);
           // A rejected code re-shows the page; like SIT's, the error text is
           // filled in by a script after load.
           return http.Response(
@@ -160,8 +183,25 @@ void main() {
         }
         return http.Response('not found', 404);
       });
-      return AuthService(SessionClient(mock), SecureStorage());
+      return AuthService(SessionClient(mock), SecureStorage())
+        ..clock = (() => fakeNow)
+        ..sleep = (d) async {
+          sleeps.add(d);
+          fakeNow = fakeNow.add(d);
+        };
     }
+
+    test('goes from the in-between page to the code page without asking to approve or pausing', () async {
+      final auth = await service(totp: config.toUri(), page: sitPage, withInterstitial: true);
+      final challenges = <MfaChallenge>[];
+      final ok = await auth.login('2100000', 'pw', onMfaChallenge: challenges.add);
+      auth.dispose();
+
+      expect(ok, isTrue);
+      expect(codesSeen, hasLength(1));
+      expect(challenges.every((c) => c.automatic), isTrue, reason: 'never shows "approve on your phone"');
+      expect(sleeps.where((d) => d == const Duration(seconds: 2)), isEmpty, reason: 'no polling pause');
+    });
 
     test('fills in the current code and finishes signing in', () async {
       final auth = await service(totp: config.toUri());
@@ -199,6 +239,8 @@ void main() {
       );
       auth.dispose();
       expect(codesSeen, hasLength(2));
+      // A code can only be used once, so the retry must send a new one.
+      expect(codesSeen[0], isNot(codesSeen[1]));
     });
 
     test('finds a generically named code box by its hints', () async {

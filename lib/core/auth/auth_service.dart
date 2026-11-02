@@ -96,6 +96,13 @@ class AuthService {
     signInLog.value = next.length > 300 ? next.sublist(next.length - 300) : next;
   }
 
+  /// Time source and pause used by the MFA steps; tests replace them to
+  /// fast-forward through code periods.
+  @visibleForTesting
+  DateTime Function() clock = DateTime.now;
+  @visibleForTesting
+  Future<void> Function(Duration) sleep = (d) => Future<void>.delayed(d);
+
   /// Called whenever the session flips between signed-in and signed-out.
   void Function(bool active)? onSessionChanged;
 
@@ -205,13 +212,15 @@ class AuthService {
     required void Function(String) log,
     void Function(MfaChallenge)? onChallenge,
   }) async {
-    final deadline = DateTime.now().add(mfaTimeout);
+    final deadline = clock().add(mfaTimeout);
     var url = startUrl;
     var page = startPage;
     String? announcedNumber;
+    var announcedApproval = false;
     final totp = await _loadTotp(log);
     var codesSent = 0;
     String? codeError;
+    String? lastCode;
 
     for (var step = 1;; step++) {
       final doc = parser.parse(page);
@@ -242,15 +251,17 @@ class AuthService {
           throw MfaException("The verification code wasn't accepted${codeError != null ? ' ($codeError)' : ''}. "
               "Check the code secret in Account and that this phone's clock is set automatically.");
         }
-        // A code about to expire may be stale by the time it arrives.
-        if (totp.secondsLeft(DateTime.now()) < 3) {
-          await Future<void>.delayed(Duration(seconds: totp.secondsLeft(DateTime.now()) + 1));
+        // A code about to expire may be stale by the time it arrives, and a
+        // code can't be used twice, so a retry waits for the next one.
+        if (totp.secondsLeft(clock()) < 3 || totp.codeAt(clock()) == lastCode) {
+          await sleep(Duration(seconds: totp.secondsLeft(clock()) + 1));
         }
         onChallenge?.call(const MfaChallenge(
           message: 'Entering your verification code automatically…',
           automatic: true,
         ));
-        fields[codeInput] = totp.codeAt(DateTime.now());
+        lastCode = totp.codeAt(clock());
+        fields[codeInput] = lastCode;
         codesSent++;
         log('MFA: submitting verification code (attempt $codesSent) to ${target.path} '
             'as "$codeInput", other fields=${fields.keys.where((k) => k != codeInput).join(", ")}');
@@ -279,17 +290,27 @@ class AuthService {
         continue;
       }
 
-      if (step == 1 || number != announcedNumber) {
-        announcedNumber = number;
-        onChallenge?.call(MfaChallenge(
-          number: number,
-          message: number != null
-              ? 'Open Microsoft Authenticator and enter the number $number to approve the sign-in.'
-              : 'Open Microsoft Authenticator and approve the sign-in request.',
-        ));
+      if (number != null) {
+        if (number != announcedNumber) {
+          announcedNumber = number;
+          onChallenge?.call(MfaChallenge(
+            number: number,
+            message: 'Open Microsoft Authenticator and enter the number $number to approve the sign-in.',
+          ));
+        }
+      } else if (totp != null && step <= 2) {
+        // With automatic codes on, a page without a number or code box is
+        // usually a step on the way to the code page: don't ask the user to
+        // approve anything yet.
+        if (step == 1) {
+          onChallenge?.call(const MfaChallenge(message: 'Verifying your sign-in…', automatic: true));
+        }
+      } else if (!announcedApproval) {
+        announcedApproval = true;
+        onChallenge?.call(const MfaChallenge(message: 'Open Microsoft Authenticator and approve the sign-in request.'));
       }
 
-      final remaining = deadline.difference(DateTime.now());
+      final remaining = deadline.difference(clock());
       if (remaining <= Duration.zero) {
         throw MfaException('Timed out waiting for Microsoft Authenticator approval.');
       }
@@ -318,10 +339,13 @@ class AuthService {
       if (nextDoc.querySelector('input[type="password"]') != null) {
         throw MfaException(_extractError(nextDoc) ?? 'ADFS rejected the sign-in and went back to the password page.');
       }
+      // Moved on to a code page: answer it straight away, no polling pause.
+      if (_findCodeForm(nextDoc) != null) continue;
       final error = _extractError(nextDoc);
       if (error != null) throw MfaException(error);
 
-      await Future<void>.delayed(const Duration(seconds: 2));
+      // Still waiting for approval on the phone: poll again shortly.
+      await sleep(const Duration(seconds: 2));
     }
   }
 
@@ -792,7 +816,8 @@ class AuthService {
   /// so that is read first; the "View details" link that sits in a box styled
   /// as an error is never taken for the message.
   String? _extractError(dom.Document doc) {
-    final scripted = RegExp(r"""[dD]elayPopulate\(\s*['"]errorText['"]\s*,\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""");
+    final scripted =
+        RegExp(r"""[dD]elayPopulate\(\s*['"]errorText['"]\s*,\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""");
     for (final script in doc.querySelectorAll('script')) {
       for (final m in scripted.allMatches(script.text)) {
         final text = (m.group(1) ?? m.group(2) ?? '').replaceAll(r'\"', '"').replaceAll(r"\'", "'").trim();
