@@ -4,9 +4,16 @@ import 'package:flutter/material.dart';
 /// actions sit where a thumb reaches when the phone is held in one hand.
 /// Shows a back button when there's somewhere to go back to, then [child].
 class ThumbBar extends StatelessWidget {
+  /// Every control in the bar is this tall, so back and the actions line up.
+  static const height = 52.0;
+
   final Widget? child;
 
-  const ThumbBar({super.key, this.child});
+  /// Optional line of context shown above the controls, across the full width
+  /// (e.g. the date and time being searched).
+  final Widget? caption;
+
+  const ThumbBar({super.key, this.child, this.caption});
 
   @override
   Widget build(BuildContext context) {
@@ -18,19 +25,116 @@ class ThumbBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (canPop)
-                IconButton.filledTonal(
-                  tooltip: 'Back',
-                  iconSize: 24,
-                  style: IconButton.styleFrom(minimumSize: const Size(52, 52)),
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back),
+              if (caption != null) ...[
+                DefaultTextStyle.merge(
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(color: scheme.onSurfaceVariant),
+                  child: caption!,
                 ),
-              if (canPop && child != null) const SizedBox(width: 12),
-              if (child != null) Expanded(child: child!),
+                const SizedBox(height: 8),
+              ],
+              SizedBox(
+                height: height,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (canPop)
+                      SizedBox.square(
+                        dimension: height,
+                        child: IconButton.filledTonal(
+                          tooltip: 'Back',
+                          iconSize: 24,
+                          // Same rounded square as the bar's buttons.
+                          style: IconButton.styleFrom(
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          icon: const Icon(Icons.arrow_back),
+                        ),
+                      ),
+                    if (canPop && child != null) const SizedBox(width: 12),
+                    if (child != null) Expanded(child: child!),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One option of a [ThumbToggle].
+class ThumbToggleOption<T> {
+  final T value;
+  final String label;
+  final IconData? icon;
+
+  const ThumbToggleOption(this.value, this.label, {this.icon});
+}
+
+/// A two-or-more option switch for a [ThumbBar]: fills the bar's 52 px height
+/// exactly, with the same rounded corners as its buttons, on every platform.
+class ThumbToggle<T> extends StatelessWidget {
+  final List<ThumbToggleOption<T>> options;
+  final T selected;
+  final ValueChanged<T> onChanged;
+
+  const ThumbToggle({super.key, required this.options, required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(12);
+
+    return Container(
+      height: ThumbBar.height,
+      decoration: BoxDecoration(border: Border.all(color: scheme.outline), borderRadius: radius),
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < options.length; i++) ...[
+              if (i > 0) VerticalDivider(width: 1, thickness: 1, color: scheme.outline),
+              Expanded(child: _segment(context, options[i])),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _segment(BuildContext context, ThumbToggleOption<T> option) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final on = option.value == selected;
+    final fg = on ? scheme.onSecondaryContainer : scheme.onSurface;
+
+    return Semantics(
+      button: true,
+      selected: on,
+      child: Material(
+        color: on ? scheme.secondaryContainer : Colors.transparent,
+        child: InkWell(
+          onTap: on ? null : () => onChanged(option.value),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (option.icon != null) ...[Icon(option.icon, size: 18, color: fg), const SizedBox(width: 8)],
+              Flexible(
+                child: Text(
+                  option.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(color: fg),
+                ),
+              ),
             ],
           ),
         ),

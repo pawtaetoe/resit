@@ -102,6 +102,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   Set<String> _types = {};
   bool _loadingRooms = false;
   String? _roomsError;
+
+  /// The room type filter starts collapsed to a one-line summary.
+  bool _typesExpanded = false;
   String _filter = '';
   final _resultsKey = GlobalKey();
 
@@ -367,8 +370,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
             ),
           ],
           const SizedBox(height: 20),
-          _label(context, 'Room types'),
-          _buildTypeFilter(),
+          _buildTypeSection(),
           const SizedBox(height: 16),
           QuotaCard(day: _date),
           const SizedBox(height: 24),
@@ -379,24 +381,13 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       // The chosen slot and the search button stay under the thumb while
       // the options scroll above.
       bottomNavigationBar: ThumbBar(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              _slotSummary,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 6),
-            BusyButton(
-              onPressed: _startOptions().isEmpty || overQuota || (_allRooms != null && _types.isEmpty) ? null : _search,
-              busy: _searching,
-              icon: Icons.search,
-              label: 'Find free rooms',
-              busyLabel: _total == 0 ? 'Checking rooms…' : 'Checking rooms… $_checked/$_total',
-            ),
-          ],
+        caption: Text(_slotSummary),
+        child: BusyButton(
+          onPressed: _startOptions().isEmpty || overQuota || (_allRooms != null && _types.isEmpty) ? null : _search,
+          busy: _searching,
+          icon: Icons.search,
+          label: 'Find free rooms',
+          busyLabel: _total == 0 ? 'Checking rooms…' : 'Checking rooms… $_checked/$_total',
         ),
       ),
     );
@@ -462,6 +453,74 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       menuMaxHeight: 320,
       items: [for (final m in options) DropdownMenuItem(value: m, child: Text(_hhmm(m)))],
       onChanged: _searching ? null : (m) => _changeSearch(() => _startMin = m!),
+    );
+  }
+
+  /// Collapsed: "Room types" with the picked types on one line. Tap to show
+  /// a chip for every type.
+  Widget _buildTypeSection() {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final rooms = _allRooms;
+    final picked = _types.toList()
+      ..sort((a, b) {
+        final qa = canonicalRoomType(a) != null ? 0 : 1;
+        final qb = canonicalRoomType(b) != null ? 0 : 1;
+        return qa != qb ? qa.compareTo(qb) : a.compareTo(b);
+      });
+    final summary = rooms == null
+        ? (_roomsError != null
+            ? "Couldn't load the room types"
+            : _loadingRooms
+                ? 'Loading room types…'
+                : 'Discussion and meeting rooms')
+        : picked.isEmpty
+            ? 'None picked — pick at least one'
+            : picked.join(', ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: rooms == null ? null : () => setState(() => _typesExpanded = !_typesExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Room types', style: theme.textTheme.titleSmall?.copyWith(color: muted)),
+                        const SizedBox(height: 2),
+                        Text(
+                          summary,
+                          maxLines: _typesExpanded ? null : 1,
+                          overflow: _typesExpanded ? null : TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: picked.isEmpty && rooms != null ? theme.colorScheme.error : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (rooms != null)
+                    Icon(_typesExpanded ? Icons.expand_less : Icons.expand_more, color: muted)
+                  else if (_roomsError != null)
+                    TextButton(onPressed: _loadRooms, child: const Text('Retry')),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_typesExpanded && rooms != null) ...[
+          const SizedBox(height: 4),
+          _buildTypeFilter(),
+        ],
+      ],
     );
   }
 

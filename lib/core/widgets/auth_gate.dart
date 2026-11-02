@@ -84,7 +84,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
       appBar: thumbAppBar(widget.title),
       body: body,
       bottomNavigationBar: ThumbBar(
-        child: action == null ? null : SizedBox(height: 52, child: action),
+        child: action,
       ),
     );
   }
