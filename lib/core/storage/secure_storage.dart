@@ -8,6 +8,7 @@ class SecureStorage {
   static const _keyPassword = 'rbs_password';
   static const _keySession = 'rbs_session_cookies';
   static const _keyTotp = 'mfa_totp_uri';
+  static const _keySignedOut = 'signed_out';
 
   final FlutterSecureStorage _store;
   Future<void>? _migration;
@@ -77,4 +78,11 @@ class SecureStorage {
   Future<String?> getTotp() => _store.read(key: _keyTotp);
 
   Future<void> clearTotp() => _store.delete(key: _keyTotp);
+
+  /// Set when the user signs out on purpose, so the app doesn't sign itself
+  /// back in with the saved credentials until they sign in again.
+  Future<void> setSignedOut(bool value) =>
+      value ? _store.write(key: _keySignedOut, value: '1') : _store.delete(key: _keySignedOut);
+
+  Future<bool> isSignedOut() async => await _store.read(key: _keySignedOut) == '1';
 }

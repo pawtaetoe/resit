@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
+import 'package:resit/features/exams/presentation/exam_results_screen.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
@@ -47,12 +48,19 @@ class ServicesScreen extends ConsumerWidget {
               onTap: () => _open(context, const ManageBookingScreen()),
             ),
             const SizedBox(height: 24),
-            const _SectionLabel('Classes'),
+            const _SectionLabel('Classes & exams'),
             _TaskTile(
               icon: Icons.calendar_view_week_outlined,
               title: 'Timetable',
               subtitle: 'Your weekly class schedule from in4SIT',
               onTap: () => _open(context, const TimetableScreen()),
+            ),
+            const SizedBox(height: 8),
+            _TaskTile(
+              icon: Icons.grading_outlined,
+              title: 'Exam results',
+              subtitle: 'Grades and GPA for each term',
+              onTap: () => _open(context, const ExamResultsScreen()),
             ),
           ],
         ),

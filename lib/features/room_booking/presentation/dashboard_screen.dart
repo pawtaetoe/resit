@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -84,8 +86,25 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   bool _searching = false;
   List<RoomWithSlots>? _rooms;
+
+  /// Progress of the per-room search, and rooms that couldn't be checked.
+  int _checked = 0;
+  int _total = 0;
+  List<Room> _failed = [];
+  Object? _firstFailure;
+  StreamSubscription<RoomCheck>? _searchSub;
   String? _error;
   bool _errorIsSession = false;
+
+  /// Every room the school lists, and the room types picked in the filter.
+  /// Discussion and meeting rooms are picked by default.
+  List<Room>? _allRooms;
+  Set<String> _types = {};
+  bool _loadingRooms = false;
+  String? _roomsError;
+
+  /// The room type filter starts collapsed to a one-line summary.
+  bool _typesExpanded = false;
   String _filter = '';
   final _resultsKey = GlobalKey();
 
@@ -103,7 +122,41 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       _startMin = earliest < 13 * 60 ? 13 * 60 : earliest;
     }
     _duration = _validDurations().contains(120) ? 120 : _validDurations().last;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadRooms());
   }
+
+  /// Loads the room list so the type filter can show every type there is.
+  Future<List<Room>> _loadRooms() async {
+    final cached = _allRooms;
+    if (cached != null) return cached;
+    setState(() {
+      _loadingRooms = true;
+      _roomsError = null;
+    });
+    try {
+      final rooms = await ref.read(bookingServiceProvider).getRooms();
+      if (mounted) {
+        setState(() {
+          _allRooms = rooms;
+          final types = rooms.map((r) => r.rsrcTypName).where((t) => t.isNotEmpty).toSet();
+          final defaults = types.where((t) => canonicalRoomType(t) != null).toSet();
+          // Default to discussion and meeting rooms; if the school names them
+          // in a way that isn't recognised, start with everything.
+          _types = defaults.isNotEmpty ? defaults : types;
+        });
+      }
+      return rooms;
+    } catch (e) {
+      if (mounted) setState(() => _roomsError = friendlyError(e));
+      rethrow;
+    } finally {
+      if (mounted) setState(() => _loadingRooms = false);
+    }
+  }
+
+  /// Whether every picked room type has a weekly allowance; only then do the
+  /// hours left limit the length that can be picked.
+  bool get _onlyQuotaTypes => _types.isNotEmpty && _types.every((t) => canonicalRoomType(t) != null);
 
   DateTime _today() {
     final now = DateTime.now();
@@ -148,38 +201,89 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       }
       final valid = _validDurations();
       if (!valid.contains(_duration)) _duration = valid.isEmpty ? 30 : valid.last;
+      _searchSub?.cancel();
+      _searching = false;
       _rooms = null;
+      _failed = [];
       _error = null;
     });
   }
 
-  Future<void> _search() async {
+  @override
+  void dispose() {
+    _searchSub?.cancel();
+    super.dispose();
+  }
+
+  /// Checks rooms one per request, several at once, and lists each free
+  /// room as soon as its answer arrives. With [only], re-checks just those
+  /// rooms (the ones that failed) and keeps the results found so far.
+  Future<void> _search({List<Room>? only}) async {
+    await _searchSub?.cancel();
     setState(() {
       _searching = true;
       _error = null;
-      _rooms = null;
-      _filter = '';
+      _firstFailure = null;
+      if (only == null) {
+        _rooms = [];
+        _failed = [];
+        _filter = '';
+        _checked = 0;
+        _total = 0;
+      } else {
+        _failed = [];
+        _checked = 0;
+        _total = only.length;
+      }
     });
 
     try {
       final service = ref.read(bookingServiceProvider);
-      final rooms = await service.getRooms();
-      final info = await service.checkAvailability(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin));
+      final all = await _loadRooms();
+      final rooms = only ?? all.where((r) => _types.contains(r.rsrcTypName)).toList();
+      if (!mounted) return;
+      setState(() => _total = rooms.length);
+      if (only == null) _revealResults();
 
-      final free = <RoomWithSlots>[];
-      for (final rm in info) {
-        final picks = slotsInRange(rm.slots, _startMin, _endMin);
-        if (picks.isNotEmpty) free.add(RoomWithSlots(rm.room, picks));
-      }
-      if (mounted) {
-        setState(() => _rooms = free);
-        _revealResults();
+      // Fixed now, so late answers are matched against the slot that was
+      // searched even if the form changes meanwhile.
+      final start = _startMin;
+      final end = _endMin;
+      final done = Completer<void>();
+
+      _searchSub = service.checkEachRoom(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin)).listen(
+        (check) {
+          if (!mounted) return;
+          setState(() {
+            _checked++;
+            if (check.error != null) {
+              _failed.add(check.room);
+              _firstFailure ??= check.error;
+            } else if (check.result != null) {
+              final picks = slotsInRange(check.result!.slots, start, end);
+              if (picks.isNotEmpty) _rooms?.add(RoomWithSlots(check.room, picks));
+            }
+          });
+        },
+        onError: (Object e) {
+          if (!done.isCompleted) done.completeError(e);
+        },
+        onDone: () {
+          if (!done.isCompleted) done.complete();
+        },
+      );
+      await done.future;
+
+      // Every room failed: show it as an error rather than "no rooms free".
+      if (mounted && _total > 0 && _failed.length == _total && (_rooms?.isEmpty ?? true)) {
+        throw _firstFailure ?? Exception("Couldn't check any rooms.");
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _error = friendlyError(e);
           _errorIsSession = isSessionError(e);
+          _failed = [];
         });
         _revealResults();
       }
@@ -201,7 +305,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   Future<void> _book(RoomWithSlots room) async {
     final summary = _slotSummary;
-    final type = room.room.rsrcTypName;
+    final type = room.room.quotaType;
     final quota = weeklyQuotaFor(ref, _date);
     final quotaNote = quota == null || !quotaRoomTypes.contains(type)
         ? null
@@ -238,7 +342,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final quota = weeklyQuotaFor(ref, _date);
-    final maxLeft = _maxLeft(quota);
+    // Other room types (e.g. lecture rooms) have no weekly allowance, so the
+    // hours left only limit the length when just DR/MR are being searched.
+    final maxLeft = _onlyQuotaTypes ? _maxLeft(quota) : null;
     final overQuota = maxLeft != null && _duration > maxLeft;
 
     return Scaffold(
@@ -263,6 +369,8 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
               style: TextStyle(color: theme.colorScheme.error),
             ),
           ],
+          const SizedBox(height: 20),
+          _buildTypeSection(),
           const SizedBox(height: 16),
           QuotaCard(day: _date),
           const SizedBox(height: 24),
@@ -273,24 +381,13 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       // The chosen slot and the search button stay under the thumb while
       // the options scroll above.
       bottomNavigationBar: ThumbBar(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              _slotSummary,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 6),
-            BusyButton(
-              onPressed: _startOptions().isEmpty || overQuota ? null : _search,
-              busy: _searching,
-              icon: Icons.search,
-              label: 'Find free rooms',
-              busyLabel: 'Checking rooms…',
-            ),
-          ],
+        caption: Text(_slotSummary),
+        child: BusyButton(
+          onPressed: _startOptions().isEmpty || overQuota || (_allRooms != null && _types.isEmpty) ? null : _search,
+          busy: _searching,
+          icon: Icons.search,
+          label: 'Find free rooms',
+          busyLabel: _total == 0 ? 'Checking rooms…' : 'Checking rooms… $_checked/$_total',
         ),
       ),
     );
@@ -350,12 +447,129 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       return const Text('No more slots today. Pick another day.');
     }
     return DropdownButtonFormField<int>(
-      value: options.contains(_startMin) ? _startMin : options.first,
+      initialValue: options.contains(_startMin) ? _startMin : options.first,
       key: ValueKey(_date), // rebuild with fresh options when the day changes
       decoration: const InputDecoration(prefixIcon: Icon(Icons.access_time)),
       menuMaxHeight: 320,
       items: [for (final m in options) DropdownMenuItem(value: m, child: Text(_hhmm(m)))],
       onChanged: _searching ? null : (m) => _changeSearch(() => _startMin = m!),
+    );
+  }
+
+  /// Collapsed: "Room types" with the picked types on one line. Tap to show
+  /// a chip for every type.
+  Widget _buildTypeSection() {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final rooms = _allRooms;
+    final picked = _types.toList()
+      ..sort((a, b) {
+        final qa = canonicalRoomType(a) != null ? 0 : 1;
+        final qb = canonicalRoomType(b) != null ? 0 : 1;
+        return qa != qb ? qa.compareTo(qb) : a.compareTo(b);
+      });
+    final summary = rooms == null
+        ? (_roomsError != null
+            ? "Couldn't load the room types"
+            : _loadingRooms
+                ? 'Loading room types…'
+                : 'Discussion and meeting rooms')
+        : picked.isEmpty
+            ? 'None picked — pick at least one'
+            : picked.join(', ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: rooms == null ? null : () => setState(() => _typesExpanded = !_typesExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Room types', style: theme.textTheme.titleSmall?.copyWith(color: muted)),
+                        const SizedBox(height: 2),
+                        Text(
+                          summary,
+                          maxLines: _typesExpanded ? null : 1,
+                          overflow: _typesExpanded ? null : TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: picked.isEmpty && rooms != null ? theme.colorScheme.error : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (rooms != null)
+                    Icon(_typesExpanded ? Icons.expand_less : Icons.expand_more, color: muted)
+                  else if (_roomsError != null)
+                    TextButton(onPressed: _loadRooms, child: const Text('Retry')),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_typesExpanded && rooms != null) ...[
+          const SizedBox(height: 4),
+          _buildTypeFilter(),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildTypeFilter() {
+    final theme = Theme.of(context);
+    final rooms = _allRooms;
+    if (rooms == null) {
+      if (_roomsError != null) {
+        return Row(
+          children: [
+            Expanded(child: Text("Couldn't load the room types.", style: theme.textTheme.bodySmall)),
+            TextButton(onPressed: _loadRooms, child: const Text('Retry')),
+          ],
+        );
+      }
+      return Text(
+        _loadingRooms ? 'Loading room types…' : 'Discussion and meeting rooms',
+        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      );
+    }
+
+    final counts = <String, int>{};
+    for (final r in rooms) {
+      if (r.rsrcTypName.isNotEmpty) counts[r.rsrcTypName] = (counts[r.rsrcTypName] ?? 0) + 1;
+    }
+    // Discussion and meeting rooms first, then the rest by name.
+    final types = counts.keys.toList()
+      ..sort((a, b) {
+        final qa = canonicalRoomType(a) != null ? 0 : 1;
+        final qb = canonicalRoomType(b) != null ? 0 : 1;
+        return qa != qb ? qa.compareTo(qb) : a.compareTo(b);
+      });
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final t in types)
+          FilterChip(
+            label: Text('$t (${counts[t]})'),
+            selected: _types.contains(t),
+            onSelected: _searching
+                ? null
+                : (on) => _changeSearch(() {
+                      _types = {..._types};
+                      on ? _types.add(t) : _types.remove(t);
+                    }),
+          ),
+      ],
     );
   }
 
@@ -392,27 +606,60 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       return [
         MessageView(
           icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
-          title: _errorIsSession ? 'Session expired' : "Couldn't load rooms",
+          title: _errorIsSession ? "Couldn't sign you in" : "Couldn't load rooms",
           message: _error,
-          action: _errorIsSession
-              ? FilledButton.icon(
-                  onPressed: () => goToAccount(context, ref),
-                  icon: const Icon(Icons.login),
-                  label: const Text('Sign in again'),
-                )
-              : FilledButton.icon(
-                  onPressed: _search,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
-                ),
+          action: FilledButton.icon(
+            onPressed: _search,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Try again'),
+          ),
         ),
       ];
     }
 
     final rooms = _rooms;
     if (rooms == null) return [];
+    final theme = Theme.of(context);
+
+    // While checking: progress, with free rooms listed below as they arrive.
+    final progress = _searching
+        ? <Widget>[
+            Text(
+              _total == 0 ? 'Getting the room list…' : 'Checked $_checked of $_total rooms…',
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(value: _total == 0 ? null : _checked / _total),
+            ),
+            const SizedBox(height: 16),
+          ]
+        : const <Widget>[];
+
+    // Rooms that couldn't be checked even after a retry.
+    final failedNote = !_searching && _failed.isNotEmpty
+        ? <Widget>[
+            Card(
+              color: theme.colorScheme.errorContainer,
+              child: ListTile(
+                leading: Icon(Icons.warning_amber_rounded, color: theme.colorScheme.onErrorContainer),
+                title: Text(
+                  "${_failed.length} ${_failed.length == 1 ? 'room' : 'rooms'} couldn't be checked",
+                  style: TextStyle(color: theme.colorScheme.onErrorContainer),
+                ),
+                trailing: TextButton(
+                  onPressed: () => _search(only: List.of(_failed)),
+                  child: const Text('Check again'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ]
+        : const <Widget>[];
 
     if (rooms.isEmpty) {
+      if (_searching || _failed.isNotEmpty) return [...progress, ...failedNote];
       return [
         const MessageView(
           icon: Icons.meeting_room_outlined,
@@ -423,7 +670,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     }
 
     final quota = weeklyQuotaFor(ref, _date);
-    bool fits(RoomWithSlots r) => quota == null || quota.fits(r.room.rsrcTypName, _duration);
+    // Only discussion and meeting rooms count against the weekly hours.
+    bool fits(RoomWithSlots r) =>
+        quota == null || !quotaRoomTypes.contains(r.room.quotaType) || quota.fits(r.room.quotaType, _duration);
 
     final q = _filter.toLowerCase();
     final shown = (q.isEmpty
@@ -431,11 +680,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
         : rooms.where((r) => '${r.room.rsrcName} ${r.room.rsrcTypName}'.toLowerCase().contains(q)).toList())
       // Rooms you can still book come first.
       ..sort((a, b) => (fits(a) ? 0 : 1).compareTo(fits(b) ? 0 : 1));
-    final theme = Theme.of(context);
-
     return [
+      ...progress,
+      ...failedNote,
       Text(
-        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free',
+        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free${_searching ? ' so far' : ''}',
         style: theme.textTheme.titleMedium,
       ),
       const SizedBox(height: 8),
@@ -461,7 +710,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   Widget _roomTile(RoomWithSlots rm, bool canBook, WeeklyQuota? quota) {
     final scheme = Theme.of(context).colorScheme;
-    final type = rm.room.rsrcTypName;
+    final type = rm.room.quotaType;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Card(
@@ -476,7 +725,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text([
-                if (type.isNotEmpty) type,
+                if (rm.room.rsrcTypName.isNotEmpty) rm.room.rsrcTypName,
                 if (rm.room.capacity > 0) 'Seats ${rm.room.capacity}',
               ].join(' · ')),
               if (!canBook && quota != null)

@@ -2,10 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/auth/totp.dart';
 import 'package:resit/features/room_booking/data/booking_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
 final secureStorageProvider = Provider<SecureStorage>((ref) {
@@ -42,8 +44,13 @@ final timetableServiceProvider = Provider<TimetableService>((ref) {
 // A provider to manage the login state globally
 final authStateProvider = StateProvider<bool>((ref) => false);
 
-/// True while the app is quietly restoring the saved session at startup.
-final sessionRestoringProvider = StateProvider<bool>((ref) => false);
+/// Checks the session and signs in again automatically when it has expired.
+final sessionControllerProvider = StateNotifierProvider<SessionController, SessionState>((ref) {
+  return SessionController(ref.watch(authServiceProvider), ref.watch(secureStorageProvider));
+});
+
+/// True while the app is checking the session or signing back in.
+final sessionRestoringProvider = Provider<bool>((ref) => ref.watch(sessionControllerProvider).busy);
 
 /// Which bottom tab is showing (0 = Home, 1 = Account). Lets other screens
 /// send the user to Account to sign in.
@@ -77,4 +84,8 @@ final totpConfigProvider = FutureProvider<TotpConfig?>((ref) async {
   } catch (_) {
     return null;
   }
+});
+
+final examServiceProvider = Provider<ExamService>((ref) {
+  return ExamService(ref.watch(authServiceProvider));
 });

@@ -58,4 +58,19 @@ void main() {
     final q = WeeklyQuota.from([_b('E2-03-12', '2 Nov 2026', '08:00-13:00')], day, types);
     expect(q.remaining(discussionRoom), 0);
   });
+
+  test('room type names are matched by their words, not exact text', () {
+    expect(canonicalRoomType('Discussion Room'), discussionRoom);
+    expect(canonicalRoomType('Meeting Room'), meetingRoom);
+    expect(canonicalRoomType('Meeting Rooms'), meetingRoom);
+    expect(canonicalRoomType('MEETING ROOM (Hybrid)'), meetingRoom);
+    expect(canonicalRoomType('Lecture Theatre'), isNull);
+
+    final rooms = [
+      Room(rsrcId: '1', rsrcTypId: '2', rsrcName: 'MR E2-05-01', rsrcTypName: 'Meeting Rooms', capacity: 12),
+    ];
+    final q = WeeklyQuota.from([_b('MR E2-05-01', '2 Nov 2026', '10:00-12:00')], day, typeByRoomName(rooms));
+    expect(q.used(meetingRoom), 120);
+    expect(rooms.single.quotaType, meetingRoom);
+  });
 }

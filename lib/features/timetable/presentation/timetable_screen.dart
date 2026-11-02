@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
-import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
@@ -58,15 +58,27 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       if (force) _weeks.clear();
     });
 
+    final service = ref.read(timetableServiceProvider);
+    Future<WeekSchedule> fetch() => service.week(
+          monday,
+          onMfaChallenge: (challenge) {
+            if (mounted) setState(() => _mfaChallenge = challenge);
+          },
+        );
+
     try {
-      final service = ref.read(timetableServiceProvider);
       if (force) service.reset();
-      final week = await service.week(
-        monday,
-        onMfaChallenge: (challenge) {
-          if (mounted) setState(() => _mfaChallenge = challenge);
-        },
-      );
+      WeekSchedule week;
+      try {
+        week = await fetch();
+      } on SessionExpiredException {
+        // in4SIT's sign-in failed: sign in afresh automatically, then retry
+        // once, instead of asking the user to do it.
+        final signedIn = await ref.read(sessionControllerProvider.notifier).ensureSignedIn(force: true);
+        if (!signedIn) rethrow;
+        service.reset();
+        week = await fetch();
+      }
       if (!mounted) return;
       setState(() => _weeks[monday] = week);
     } catch (e) {
@@ -356,33 +368,33 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       });
     }
 
-    if (_mfaChallenge != null && loading) {
+    // MFA from in4SIT's own sign-in, or from the automatic sign-in retry.
+    final sessionState = ref.watch(sessionControllerProvider);
+    final challenge =
+        _mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
+    if (challenge != null && loading) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: MfaCard(challenge: _mfaChallenge!),
+          child: MfaCard(challenge: challenge),
         ),
       );
     }
 
     if (week == null && error != null) {
       final session = isSessionError(error);
+      final retry = FilledButton.icon(
+        onPressed: () => _loadWeek(monday, force: true),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Try again'),
+      );
       return MessageView(
         icon: session ? Icons.lock_clock : Icons.cloud_off,
         tone: Tone.danger,
-        title: session ? 'Session expired' : "Couldn't load this week",
+        title: session ? "Couldn't sign in to in4SIT" : "Couldn't load this week",
         message: friendlyError(error),
-        action: session
-            ? FilledButton.icon(
-                onPressed: () => goToAccount(context, ref),
-                icon: const Icon(Icons.login),
-                label: const Text('Sign in again'),
-              )
-            : FilledButton.icon(
-                onPressed: () => _loadWeek(monday, force: true),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-              ),
+        detail: errorDetail(error),
+        action: retry,
       );
     }
 

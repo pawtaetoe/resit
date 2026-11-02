@@ -3,8 +3,9 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // Kotlin is applied by the Flutter Gradle Plugin (see android.builtInKotlin
+    // in gradle.properties), so it isn't listed here.
+    // The Flutter Gradle Plugin must be applied after the Android Gradle Plugin.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -60,7 +61,6 @@ android {
     }
 }
 
-// Kotlin 2.2 removed the old `kotlinOptions` block; this is its replacement.
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

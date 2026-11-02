@@ -165,17 +165,15 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       // Switching lists sits next to back, under the thumb; refresh is a
       // pull-down on the list.
       bottomNavigationBar: ThumbBar(
-        child: SegmentedButton<_Tab>(
-          showSelectedIcon: false,
-          style: SegmentedButton.styleFrom(minimumSize: const Size(0, 52)),
-          segments: const [
-            ButtonSegment(value: _Tab.upcoming, label: Text('Upcoming'), icon: Icon(Icons.upcoming_outlined)),
-            ButtonSegment(value: _Tab.past, label: Text('Past'), icon: Icon(Icons.history)),
+        child: ThumbToggle<_Tab>(
+          options: const [
+            ThumbToggleOption(_Tab.upcoming, 'Upcoming', icon: Icons.upcoming_outlined),
+            ThumbToggleOption(_Tab.past, 'Past', icon: Icons.history),
           ],
-          selected: {_tab},
-          onSelectionChanged: (s) {
+          selected: _tab,
+          onChanged: (tab) {
             setState(() {
-              _tab = s.first;
+              _tab = tab;
               _bookings = null;
             });
             _fetchBookings();
@@ -200,19 +198,13 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       return MessageView(
         icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
         tone: Tone.danger,
-        title: _errorIsSession ? 'Session expired' : "Couldn't load bookings",
+        title: _errorIsSession ? "Couldn't sign you in" : "Couldn't load bookings",
         message: _error,
-        action: _errorIsSession
-            ? FilledButton.icon(
-                onPressed: () => goToAccount(context, ref),
-                icon: const Icon(Icons.login),
-                label: const Text('Sign in again'),
-              )
-            : FilledButton.icon(
-                onPressed: _fetchBookings,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-              ),
+        action: FilledButton.icon(
+          onPressed: _fetchBookings,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Try again'),
+        ),
       );
     }
 

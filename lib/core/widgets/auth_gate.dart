@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 
 /// Sends the user to the Account tab, closing any pushed screens.
@@ -10,9 +12,10 @@ void goToAccount(BuildContext context, WidgetRef ref) {
   ref.read(homeTabProvider.notifier).state = 1;
 }
 
-/// Shows [builder]'s screen once signed in. Until then it tries to restore
-/// the saved session (no MFA needed) and, if that fails, explains how to sign
-/// in with a button that goes straight there.
+/// Shows [builder]'s screen once signed in. Until then it asks the session
+/// controller to sign back in automatically (saved credentials, automatic
+/// MFA codes) and shows its progress. Only when there's nothing saved, or
+/// the user signed out on purpose, does it point to Account.
 class AuthGate extends ConsumerStatefulWidget {
   final String title;
   final WidgetBuilder builder;
@@ -24,50 +27,42 @@ class AuthGate extends ConsumerStatefulWidget {
 }
 
 class _AuthGateState extends ConsumerState<AuthGate> {
-  bool _restoring = false;
-  String? _error;
-
   @override
   void initState() {
     super.initState();
     if (!ref.read(authStateProvider)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
+      WidgetsBinding.instance.addPostFrameCallback((_) => _signIn());
     }
   }
 
-  Future<void> _restore() async {
-    setState(() {
-      _restoring = true;
-      _error = null;
-    });
-    try {
-      // A fresh login needs MFA approval, so only the saved session is reused
-      // here. If it has lapsed the user signs in from Account.
-      await ref.read(authServiceProvider).resumeSession();
-    } catch (e) {
-      if (mounted) setState(() => _error = friendlyError(e));
-    } finally {
-      if (mounted) setState(() => _restoring = false);
-    }
-  }
+  void _signIn() => ref.read(sessionControllerProvider.notifier).ensureSignedIn();
 
   @override
   Widget build(BuildContext context) {
     if (ref.watch(authStateProvider)) return widget.builder(context);
 
-    final MessageView body;
+    final session = ref.watch(sessionControllerProvider);
+    final Widget body;
     Widget? action;
-    if (_restoring || ref.watch(sessionRestoringProvider)) {
-      body = const MessageView(
-        icon: Icons.sync,
-        title: 'Restoring your session…',
-        message: 'This only takes a moment.',
-        action: SizedBox(width: 160, child: LinearProgressIndicator()),
+
+    if (session.challenge != null && session.phase == SessionPhase.signingIn) {
+      body = Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: MfaCard(challenge: session.challenge!),
+        ),
       );
-    } else if (_error != null) {
-      body = MessageView(icon: Icons.cloud_off, title: "Couldn't check your session", message: _error);
+    } else if (session.busy || session.phase == SessionPhase.idle) {
+      body = MessageView(
+        icon: Icons.sync,
+        title: session.phase == SessionPhase.signingIn ? 'Signing you back in…' : 'Checking your session…',
+        message: 'This only takes a moment.',
+        action: const SizedBox(width: 160, child: LinearProgressIndicator()),
+      );
+    } else if (session.phase == SessionPhase.failed) {
+      body = MessageView(icon: Icons.cloud_off, title: "Couldn't sign you in", message: session.error);
       action = FilledButton.icon(
-        onPressed: _restore,
+        onPressed: _signIn,
         icon: const Icon(Icons.refresh),
         label: const Text('Try again'),
       );
@@ -75,7 +70,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
       body = const MessageView(
         icon: Icons.lock_outline,
         title: 'Sign in to continue',
-        message: 'Connect your SIT account once and the app keeps you signed in.',
+        message: 'Sign in with your SIT account once; after that the app signs you back in automatically.',
       );
       action = FilledButton.icon(
         onPressed: () => goToAccount(context, ref),
@@ -89,7 +84,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
       appBar: thumbAppBar(widget.title),
       body: body,
       bottomNavigationBar: ThumbBar(
-        child: action == null ? null : SizedBox(height: 52, child: action),
+        child: action,
       ),
     );
   }

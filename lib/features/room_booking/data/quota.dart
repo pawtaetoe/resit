@@ -62,8 +62,23 @@ String? roomTypeOf(String roomName, Map<String, String> typeByName) {
   return null;
 }
 
+/// The bookable room type a resource type name belongs to, matched by the
+/// words in it so variants like "Meeting Rooms" or "MEETING ROOM (Hybrid)"
+/// count too. Null for other kinds of resources.
+String? canonicalRoomType(String typeName) {
+  final t = typeName.toLowerCase();
+  if (t.contains('discussion')) return discussionRoom;
+  if (t.contains('meeting')) return meetingRoom;
+  return null;
+}
+
+extension RoomQuotaType on Room {
+  /// The type this room's weekly allowance is counted under.
+  String get quotaType => canonicalRoomType(rsrcTypName) ?? rsrcTypName;
+}
+
 Map<String, String> typeByRoomName(Iterable<Room> rooms) => {
-      for (final r in rooms) r.rsrcName.trim().toLowerCase(): r.rsrcTypName,
+      for (final r in rooms) r.rsrcName.trim().toLowerCase(): r.quotaType,
     };
 
 /// How much of each room type's weekly allowance is used in one week.

@@ -8,7 +8,7 @@ import 'package:resit/core/ui/app_theme.dart';
 /// Turns an exception into a sentence a student can act on.
 String friendlyError(Object error) {
   if (error is SessionExpiredException) {
-    return 'Your session has expired. Sign in again from Account.';
+    return "Your session expired and the app couldn't sign you back in automatically.";
   }
   if (error is MfaException) return error.message;
   if (error is SocketException || error is HandshakeException) {
@@ -25,6 +25,10 @@ String friendlyError(Object error) {
 }
 
 bool isSessionError(Object error) => error is SessionExpiredException;
+
+/// Technical detail behind an error, worth showing small for troubleshooting
+/// (e.g. which sign-in page a failed single sign-on ended on).
+String? errorDetail(Object error) => error is SessionExpiredException ? error.detail : null;
 
 void showSuccess(BuildContext context, String message, {SnackBarAction? action}) =>
     _show(context, message, Icons.check_circle_outline, action: action);
@@ -59,6 +63,9 @@ class MessageView extends StatelessWidget {
   final Widget? action;
   final Tone tone;
 
+  /// Small selectable technical text under the message, for troubleshooting.
+  final String? detail;
+
   const MessageView({
     super.key,
     required this.icon,
@@ -66,6 +73,7 @@ class MessageView extends StatelessWidget {
     this.message,
     this.action,
     this.tone = Tone.neutral,
+    this.detail,
   });
 
   @override
@@ -89,6 +97,17 @@ class MessageView extends StatelessWidget {
                   message!,
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+              if (detail != null) ...[
+                const SizedBox(height: 12),
+                SelectableText(
+                  detail!,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontFamily: 'monospace',
+                  ),
                 ),
               ],
               if (action != null) ...[const SizedBox(height: 24), action!],
