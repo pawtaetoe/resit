@@ -36,6 +36,14 @@ DateTime? bookingDate(Booking b) {
   }
 }
 
+/// When a booking starts (its date plus the start of "13:00-15:00").
+DateTime? bookingStart(Booking b) {
+  final date = bookingDate(b);
+  final m = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(b.timeRange);
+  if (date == null || m == null) return date;
+  return DateTime(date.year, date.month, date.day, int.parse(m[1]!), int.parse(m[2]!));
+}
+
 /// Length of a booking from its "13:00-15:00" time range, or 0 if unreadable.
 int bookingMinutes(Booking b) {
   final m = RegExp(r'(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})').firstMatch(b.timeRange);

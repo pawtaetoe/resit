@@ -152,7 +152,7 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
             ),
             const SizedBox(width: 8),
             SizedBox.square(
-              dimension: ThumbBar.height,
+              dimension: ThumbBar.heightOf(context),
               child: IconButton.outlined(
                 tooltip: 'Refresh',
                 style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),

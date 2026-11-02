@@ -16,14 +16,19 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('Home shows sign-in status and the tasks', (tester) async {
+  testWidgets('Home shows sign-in status; the tasks are on the Services tab', (tester) async {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
     expect(find.text('Not signed in'), findsOneWidget);
-    expect(find.text('Book a room'), findsOneWidget);
-    expect(find.text('My bookings'), findsOneWidget);
-    expect(find.text('Timetable'), findsOneWidget);
+    expect(find.text('Overview'), findsOneWidget);
+
+    await tester.tap(find.text('Services'));
+    await tester.pumpAndSettle();
+    for (final task in ['Book a room', 'My bookings', 'Timetable', 'Exam results', 'Academic calendar']) {
+      await tester.scrollUntilVisible(find.text(task), 100);
+      expect(find.text(task), findsOneWidget, reason: task);
+    }
   });
 
   testWidgets('Sign in on Home opens Account and empty fields are flagged', (tester) async {
@@ -44,6 +49,8 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Services'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Book a room'));
     await tester.pumpAndSettle();
     expect(find.text('Sign in to continue'), findsOneWidget);
@@ -54,10 +61,12 @@ void main() {
     expect(find.text('Student ID'), findsOneWidget);
   });
 
-  testWidgets('Back sits in the bottom bar and returns Home', (tester) async {
+  testWidgets('Back sits in the bottom bar and returns to Services', (tester) async {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Services'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('My bookings'));
     await tester.pumpAndSettle();
     final back = find.byTooltip('Back');
@@ -67,7 +76,7 @@ void main() {
 
     await tester.tap(back);
     await tester.pumpAndSettle();
-    expect(find.text('Not signed in'), findsOneWidget);
+    expect(find.text('Book a room'), findsOneWidget);
   });
 
   group('slotsInRange', () {

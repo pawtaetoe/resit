@@ -4,8 +4,13 @@ import 'package:flutter/material.dart';
 /// actions sit where a thumb reaches when the phone is held in one hand.
 /// Shows a back button when there's somewhere to go back to, then [child].
 class ThumbBar extends StatelessWidget {
-  /// Every control in the bar is this tall, so back and the actions line up.
+  /// Every control in the bar is this tall (at normal text size), so back
+  /// and the actions line up.
   static const height = 52.0;
+
+  /// The bar's control height for the user's text size: it grows with larger
+  /// system fonts (up to 80 px) so labels aren't clipped.
+  static double heightOf(BuildContext context) => MediaQuery.textScalerOf(context).scale(height).clamp(height, 80.0);
 
   final Widget? child;
 
@@ -19,50 +24,59 @@ class ThumbBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final canPop = Navigator.of(context).canPop();
+    final height = heightOf(context);
 
     return Material(
       color: scheme.surfaceContainer,
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (caption != null) ...[
-                DefaultTextStyle.merge(
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(color: scheme.onSurfaceVariant),
-                  child: caption!,
-                ),
-                const SizedBox(height: 8),
-              ],
-              SizedBox(
-                height: height,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (canPop)
-                      SizedBox.square(
-                        dimension: height,
-                        child: IconButton.filledTonal(
-                          tooltip: 'Back',
-                          iconSize: 24,
-                          // Same rounded square as the bar's buttons.
-                          style: IconButton.styleFrom(
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          onPressed: () => Navigator.of(context).maybePop(),
-                          icon: const Icon(Icons.arrow_back),
-                        ),
-                      ),
-                    if (canPop && child != null) const SizedBox(width: 12),
-                    if (child != null) Expanded(child: child!),
+        // On wide screens the controls stop at 640 px and centre, rather than
+        // stretching a button across a desktop window.
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (caption != null) ...[
+                    DefaultTextStyle.merge(
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(color: scheme.onSurfaceVariant),
+                      child: caption!,
+                    ),
+                    const SizedBox(height: 8),
                   ],
-                ),
+                  SizedBox(
+                    height: height,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (canPop)
+                          SizedBox.square(
+                            dimension: height,
+                            child: IconButton.filledTonal(
+                              tooltip: 'Back',
+                              iconSize: 24,
+                              // Same rounded square as the bar's buttons.
+                              style: IconButton.styleFrom(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              icon: const Icon(Icons.arrow_back),
+                            ),
+                          ),
+                        if (canPop && child != null) const SizedBox(width: 12),
+                        if (child != null) Expanded(child: child!),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -94,7 +108,7 @@ class ThumbToggle<T> extends StatelessWidget {
     final radius = BorderRadius.circular(12);
 
     return Container(
-      height: ThumbBar.height,
+      height: ThumbBar.heightOf(context),
       decoration: BoxDecoration(border: Border.all(color: scheme.outline), borderRadius: radius),
       child: ClipRRect(
         borderRadius: radius,

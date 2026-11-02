@@ -137,6 +137,8 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       await ref.read(bookingServiceProvider).cancelBooking(booking.cancelId);
       if (!mounted) return;
       ref.invalidate(quotaDataProvider);
+      ref.invalidate(nextBookingProvider);
+      HapticFeedback.mediumImpact();
       showSuccess(context, 'Booking for ${booking.roomName} cancelled. Its hours are back in your weekly allowance.');
       await _fetchBookings();
     } catch (e) {

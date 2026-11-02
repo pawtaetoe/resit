@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:resit/core/providers.dart';
-import 'package:resit/core/ui/app_theme.dart';
+import 'package:resit/core/widgets/section_label.dart';
+import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
+import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 
-/// Home: sign-in status at the top, then one card per task.
-class ServicesScreen extends ConsumerWidget {
+/// Services tab: one card per task, grouped by what it's for.
+class ServicesScreen extends StatelessWidget {
   const ServicesScreen({super.key});
 
   void _open(BuildContext context, Widget screen) {
@@ -16,7 +16,7 @@ class ServicesScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -24,16 +24,9 @@ class ServicesScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
           children: [
-            Text('reSIT', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text(
-              'Rooms and classes at SIT, in one place.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
-            const _SessionBanner(),
+            Text('Services', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 24),
-            const _SectionLabel('Room booking'),
+            const SectionLabel('Room booking'),
             _TaskTile(
               icon: Icons.add_business_outlined,
               title: 'Book a room',
@@ -48,7 +41,7 @@ class ServicesScreen extends ConsumerWidget {
               onTap: () => _open(context, const ManageBookingScreen()),
             ),
             const SizedBox(height: 24),
-            const _SectionLabel('Classes & exams'),
+            const SectionLabel('Classes & exams'),
             _TaskTile(
               icon: Icons.calendar_view_week_outlined,
               title: 'Timetable',
@@ -62,75 +55,22 @@ class ServicesScreen extends ConsumerWidget {
               subtitle: 'Grades and GPA for each term',
               onTap: () => _open(context, const ExamResultsScreen()),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Tells the user up front whether they're signed in, so they don't find
-/// out only after opening a feature.
-class _SessionBanner extends ConsumerWidget {
-  const _SessionBanner();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final scheme = Theme.of(context).colorScheme;
-    final signedIn = ref.watch(authStateProvider);
-    final restoring = ref.watch(sessionRestoringProvider);
-
-    final (Tone tone, IconData icon, String title, String message) = signedIn
-        ? (Tone.success, Icons.verified_user_outlined, 'Signed in', 'You can book rooms and view your timetable.')
-        : restoring
-            ? (Tone.info, Icons.sync, 'Restoring your session…', 'Hang on, checking your saved sign-in.')
-            : (Tone.warning, Icons.info_outline, 'Not signed in', 'Sign in with your SIT account to get started.');
-    final (bg, fg) = tone.colors(scheme);
-
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(16),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-        child: Row(
-          children: [
-            Icon(icon, color: fg),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: TextStyle(color: fg, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(message, style: TextStyle(color: fg, fontSize: 13)),
-                ],
-              ),
+            const SizedBox(height: 8),
+            _TaskTile(
+              icon: Icons.insights_outlined,
+              title: 'Academic progress',
+              subtitle: 'Charts of your GPA, credits and grades',
+              onTap: () => _open(context, const AcademicProgressScreen()),
             ),
-            if (!signedIn && !restoring)
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: fg),
-                onPressed: () => ref.read(homeTabProvider.notifier).state = 1,
-                child: const Text('Sign in'),
-              ),
+            const SizedBox(height: 8),
+            _TaskTile(
+              icon: Icons.calendar_month_outlined,
+              title: 'Academic calendar',
+              subtitle: 'Term dates, recess, finals and holidays',
+              onTap: () => _open(context, const AcademicCalendarScreen()),
+            ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  final String text;
-  const _SectionLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Text(
-        text,
-        style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary),
       ),
     );
   }

@@ -40,14 +40,17 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "resit");
+    gtk_header_bar_set_title(header_bar, "reSIT");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "resit");
+    gtk_window_set_title(window, "reSIT");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  // Starts at a size that fits a 1366x768 laptop; never smaller than a
+  // small phone, where the app's layouts stop fitting.
+  gtk_window_set_default_size(window, 1000, 720);
+  gtk_widget_set_size_request(GTK_WIDGET(window), 360, 600);
   gtk_widget_show(GTK_WIDGET(window));
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

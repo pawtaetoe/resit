@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
@@ -108,6 +110,17 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   String _filter = '';
   final _resultsKey = GlobalKey();
 
+  /// Room types from the last search, applied once the room list loads.
+  Set<String>? _savedTypes;
+
+  /// Completes when the running search ends, including when it's stopped.
+  Completer<void>? _searchDone;
+  bool _stopped = false;
+
+  static const _prefDuration = 'book_duration';
+  static const _prefStart = 'book_start';
+  static const _prefTypes = 'book_types';
+
   @override
   void initState() {
     super.initState();
@@ -122,7 +135,47 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       _startMin = earliest < 13 * 60 ? 13 * 60 : earliest;
     }
     _duration = _validDurations().contains(120) ? 120 : _validDurations().last;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadRooms());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadPrefs();
+      if (mounted) _loadRooms();
+    });
+  }
+
+  /// Restores the last search's length, start time and room types, where
+  /// they're still valid, so a regular booking takes fewer taps.
+  Future<void> _loadPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final duration = prefs.getInt(_prefDuration);
+      final start = prefs.getInt(_prefStart);
+      final types = prefs.getStringList(_prefTypes);
+      if (!mounted) return;
+      setState(() {
+        if (start != null && _startOptions().contains(start)) _startMin = start;
+        if (duration != null && _validDurations().contains(duration)) _duration = duration;
+        if (types != null && types.isNotEmpty) _savedTypes = types.toSet();
+      });
+    } catch (_) {
+      // Preferences are a convenience; carry on with the defaults.
+    }
+  }
+
+  Future<void> _savePrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_prefDuration, _duration);
+      await prefs.setInt(_prefStart, _startMin);
+      await prefs.setStringList(_prefTypes, _types.toList());
+    } catch (_) {}
+  }
+
+  /// Stops a running search; rooms found so far stay listed.
+  void _cancelSearch({bool stoppedByUser = false}) {
+    _searchSub?.cancel();
+    _searchSub = null;
+    final done = _searchDone;
+    if (done != null && !done.isCompleted) done.complete();
+    if (stoppedByUser) setState(() => _stopped = true);
   }
 
   /// Loads the room list so the type filter can show every type there is.
@@ -140,9 +193,14 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           _allRooms = rooms;
           final types = rooms.map((r) => r.rsrcTypName).where((t) => t.isNotEmpty).toSet();
           final defaults = types.where((t) => canonicalRoomType(t) != null).toSet();
-          // Default to discussion and meeting rooms; if the school names them
-          // in a way that isn't recognised, start with everything.
-          _types = defaults.isNotEmpty ? defaults : types;
+          // The last search's types if they still exist; otherwise discussion
+          // and meeting rooms, or everything if those aren't recognised.
+          final saved = _savedTypes?.intersection(types);
+          _types = saved != null && saved.isNotEmpty
+              ? saved
+              : defaults.isNotEmpty
+                  ? defaults
+                  : types;
         });
       }
       return rooms;
@@ -201,8 +259,9 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       }
       final valid = _validDurations();
       if (!valid.contains(_duration)) _duration = valid.isEmpty ? 30 : valid.last;
-      _searchSub?.cancel();
+      _cancelSearch();
       _searching = false;
+      _stopped = false;
       _rooms = null;
       _failed = [];
       _error = null;
@@ -211,7 +270,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   @override
   void dispose() {
-    _searchSub?.cancel();
+    _cancelSearch();
     super.dispose();
   }
 
@@ -219,9 +278,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   /// room as soon as its answer arrives. With [only], re-checks just those
   /// rooms (the ones that failed) and keeps the results found so far.
   Future<void> _search({List<Room>? only}) async {
-    await _searchSub?.cancel();
+    _cancelSearch();
+    if (only == null) _savePrefs();
     setState(() {
       _searching = true;
+      _stopped = false;
       _error = null;
       _firstFailure = null;
       if (only == null) {
@@ -250,6 +311,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       final start = _startMin;
       final end = _endMin;
       final done = Completer<void>();
+      _searchDone = done;
 
       _searchSub = service.checkEachRoom(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin)).listen(
         (check) {
@@ -320,6 +382,8 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     if (booked != true || !mounted) return;
 
     ref.invalidate(quotaDataProvider);
+    ref.invalidate(nextBookingProvider);
+    HapticFeedback.mediumImpact();
     setState(() => _rooms?.remove(room));
     showSuccess(
       context,
@@ -372,7 +436,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           const SizedBox(height: 20),
           _buildTypeSection(),
           const SizedBox(height: 16),
-          QuotaCard(day: _date),
+          QuotaSummary(day: _date),
           const SizedBox(height: 24),
           SizedBox(key: _resultsKey),
           ..._buildResults(),
@@ -382,13 +446,21 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       // the options scroll above.
       bottomNavigationBar: ThumbBar(
         caption: Text(_slotSummary),
-        child: BusyButton(
-          onPressed: _startOptions().isEmpty || overQuota || (_allRooms != null && _types.isEmpty) ? null : _search,
-          busy: _searching,
-          icon: Icons.search,
-          label: 'Find free rooms',
-          busyLabel: _total == 0 ? 'Checking rooms…' : 'Checking rooms… $_checked/$_total',
-        ),
+        // While searching, the button stops the search (rooms found so far
+        // stay listed).
+        child: _searching
+            ? FilledButton.tonalIcon(
+                onPressed: () => _cancelSearch(stoppedByUser: true),
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: Text(_total == 0 ? 'Stop' : 'Stop · checked $_checked/$_total'),
+              )
+            : BusyButton(
+                onPressed:
+                    _startOptions().isEmpty || overQuota || (_allRooms != null && _types.isEmpty) ? null : _search,
+                icon: Icons.search,
+                label: 'Find free rooms',
+                busyLabel: '',
+              ),
       ),
     );
   }
@@ -660,6 +732,17 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
     if (rooms.isEmpty) {
       if (_searching || _failed.isNotEmpty) return [...progress, ...failedNote];
+      if (_stopped) {
+        return [
+          MessageView(
+            icon: Icons.stop_circle_outlined,
+            title: 'Search stopped',
+            message: 'Checked $_checked of $_total rooms, none free so far.',
+            action: FilledButton.icon(
+                onPressed: _search, icon: const Icon(Icons.search), label: const Text('Search again')),
+          ),
+        ];
+      }
       return [
         const MessageView(
           icon: Icons.meeting_room_outlined,
@@ -684,7 +767,8 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       ...progress,
       ...failedNote,
       Text(
-        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free${_searching ? ' so far' : ''}',
+        '${rooms.length} ${rooms.length == 1 ? 'room' : 'rooms'} free'
+        '${_searching ? ' so far' : _stopped ? ' (stopped after $_checked of $_total)' : ''}',
         style: theme.textTheme.titleMedium,
       ),
       const SizedBox(height: 8),

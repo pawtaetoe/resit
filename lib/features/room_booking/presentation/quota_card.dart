@@ -95,9 +95,17 @@ class _QuotaRow extends StatelessWidget {
     final scheme = theme.colorScheme;
     final left = quota.remaining(type);
     final used = quota.used(type).clamp(0, weeklyQuotaMinutes);
-    final tone = left == 0 ? Tone.danger : left < 60 ? Tone.warning : Tone.success;
+    final tone = left == 0
+        ? Tone.danger
+        : left < 60
+            ? Tone.warning
+            : Tone.success;
     final (_, fg) = tone.colors(scheme);
-    final barColor = left == 0 ? scheme.error : left < 60 ? fg : scheme.primary;
+    final barColor = left == 0
+        ? scheme.error
+        : left < 60
+            ? fg
+            : scheme.primary;
 
     return Semantics(
       label: '${roomTypeLabel(type)}: ${formatHours(left)} left of ${formatHours(weeklyQuotaMinutes)}',
@@ -128,6 +136,58 @@ class _QuotaRow extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One line of hours left ("Discussion 2 h · Meeting 4 h") that expands to
+/// the full [QuotaCard] on tap, so it doesn't push the search further down.
+class QuotaSummary extends ConsumerStatefulWidget {
+  final DateTime day;
+  const QuotaSummary({super.key, required this.day});
+
+  @override
+  ConsumerState<QuotaSummary> createState() => _QuotaSummaryState();
+}
+
+class _QuotaSummaryState extends ConsumerState<QuotaSummary> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(quotaDataProvider);
+    // Errors show the full card, which has the retry button.
+    if (_expanded || (async.hasError && !async.hasValue)) {
+      return GestureDetector(
+        onTap: async.hasError ? null : () => setState(() => _expanded = false),
+        child: QuotaCard(day: widget.day),
+      );
+    }
+
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quota = weeklyQuotaFor(ref, widget.day);
+    final thisWeek = weekStart(widget.day) == weekStart(DateTime.now());
+    final parts = quota == null
+        ? null
+        : [
+            for (final type in quotaRoomTypes)
+              '${roomTypeLabel(type).replaceAll(' rooms', '')} ${formatHours(quota.remaining(type))}',
+          ];
+    final anyOut = quota != null && quotaRoomTypes.any((t) => quota.remaining(t) == 0);
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        onTap: () => setState(() => _expanded = true),
+        dense: true,
+        leading: Icon(Icons.hourglass_bottom, color: anyOut ? scheme.error : scheme.onSurfaceVariant),
+        title: Text(thisWeek ? 'Hours left this week' : 'Hours left that week'),
+        subtitle: parts == null
+            ? const Text('Checking…')
+            : Text(parts.join(' · '), style: TextStyle(color: anyOut ? scheme.error : null)),
+        trailing: const Icon(Icons.expand_more),
       ),
     );
   }
