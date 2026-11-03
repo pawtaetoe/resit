@@ -22,18 +22,30 @@ void main() {
     _s(tue, 9 * 60, 11 * 60, 'C'),
   ];
 
-  test('the class on now comes first', () {
-    expect(nextClass(classes, DateTime(2026, 11, 2, 10))?.courseCode, 'A');
+  test('during a class: that class, and the next one to start', () {
+    final r = currentAndNextClass(classes, DateTime(2026, 11, 2, 10));
+    expect(r.current?.courseCode, 'A');
+    expect(r.next?.courseCode, 'C');
   });
 
-  test('otherwise the next one to start, whatever the list order', () {
-    expect(nextClass(classes, DateTime(2026, 11, 2, 11))?.courseCode, 'C');
-    expect(nextClass(classes, DateTime(2026, 11, 3, 12))?.courseCode, 'B');
+  test('between classes: no current, the next one whatever the list order', () {
+    final r = currentAndNextClass(classes, DateTime(2026, 11, 2, 11));
+    expect(r.current, isNull);
+    expect(r.next?.courseCode, 'C');
+    expect(currentAndNextClass(classes, DateTime(2026, 11, 3, 12)).next?.courseCode, 'B');
   });
 
-  test('none once every class has ended', () {
-    expect(nextClass(classes, DateTime(2026, 11, 3, 16)), isNull);
-    expect(nextClass(const [], mon), isNull);
+  test('in the last class: no next one', () {
+    final r = currentAndNextClass(classes, DateTime(2026, 11, 3, 15));
+    expect(r.current?.courseCode, 'B');
+    expect(r.next, isNull);
+  });
+
+  test('nothing once every class has ended', () {
+    final r = currentAndNextClass(classes, DateTime(2026, 11, 3, 16));
+    expect(r.current, isNull);
+    expect(r.next, isNull);
+    expect(currentAndNextClass(const [], mon).next, isNull);
   });
 
   test('saved copies round-trip', () {

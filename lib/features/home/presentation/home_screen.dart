@@ -150,9 +150,9 @@ String _dayLabel(DateTime day, DateTime now) => DateUtils.isSameDay(day, now)
         ? 'Tomorrow'
         : DateFormat('EEE d MMM').format(day);
 
-/// The class on now, or the next one, from the in4SIT timetable. Shows the
-/// saved copy straight away and moves on by itself as classes end. Hidden
-/// when there's nothing to show.
+/// The class on now (if any) and the next one, from the in4SIT timetable.
+/// Shows the saved copy straight away and moves on by itself as classes end.
+/// Hidden when there's nothing to show.
 class _NextClassCard extends ConsumerStatefulWidget {
   const _NextClassCard();
 
@@ -166,7 +166,7 @@ class _NextClassCardState extends ConsumerState<_NextClassCard> {
   @override
   void initState() {
     super.initState();
-    // Re-checks every minute, so "Now" and the next class stay current.
+    // Re-checks every minute, so the current and next class stay up to date.
     _tick = Timer.periodic(const Duration(minutes: 1), (_) => setState(() {}));
   }
 
@@ -181,36 +181,48 @@ class _NextClassCardState extends ConsumerState<_NextClassCard> {
     final async = ref.watch(upcomingClassesProvider);
     final sessions = async.valueOrNull ?? ref.watch(savedUpcomingClassesProvider).valueOrNull ?? const [];
     final now = DateTime.now();
-    final next = nextClass(sessions, now);
+    final (:current, :next) = currentAndNextClass(sessions, now);
 
     // Every class read last time has ended: read the timetable again.
-    if (next == null && sessions.isNotEmpty && async.hasValue && ref.read(authStateProvider)) {
+    if (current == null && next == null && sessions.isNotEmpty && async.hasValue && ref.read(authStateProvider)) {
       Future.microtask(() => ref.invalidate(upcomingClassesProvider));
     }
-    if (next == null) return const SizedBox.shrink();
+    if (current == null && next == null) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
     final fg = theme.colorScheme.onPrimaryContainer;
-    final onNow = !next.start.isAfter(now);
     const time = ClassSession.formatMinutes;
-    final when = onNow
-        ? 'Now, until ${time(next.endMin)}'
-        : '${_dayLabel(next.date, now)}, ${time(next.startMin)} – ${time(next.endMin)}';
-    final where = next.location.trim();
-    final what = [next.courseCode, if (next.component.isNotEmpty) next.component].join(' ');
 
+    Widget row(ClassSession c, {required bool onNow}) {
+      final when = onNow
+          ? 'Now, until ${time(c.endMin)}'
+          : '${_dayLabel(c.date, now)}, ${time(c.startMin)} – ${time(c.endMin)}';
+      final where = c.location.trim();
+      final what = [c.courseCode, if (c.component.isNotEmpty) c.component].join(' ');
+      return ListTile(
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TimetableScreen())),
+        leading: Icon(onNow ? Icons.play_circle_outline : Icons.class_outlined, color: fg),
+        title: Text('${onNow ? 'Now' : 'Next'}: $what', style: TextStyle(fontWeight: FontWeight.w600, color: fg)),
+        subtitle: Text(where.isEmpty ? when : '$when · $where', style: TextStyle(color: fg)),
+        trailing: Icon(Icons.chevron_right, color: fg),
+      );
+    }
+
+    // During a class: the current class, then the next one. Otherwise just
+    // the next one.
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Card(
         color: theme.colorScheme.primaryContainer,
         clipBehavior: Clip.antiAlias,
-        child: ListTile(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TimetableScreen())),
-          leading: Icon(onNow ? Icons.play_circle_outline : Icons.class_outlined, color: fg),
-          title: Text('${onNow ? 'In class' : 'Next class'}: $what',
-              style: TextStyle(fontWeight: FontWeight.w600, color: fg)),
-          subtitle: Text(where.isEmpty ? when : '$when · $where', style: TextStyle(color: fg)),
-          trailing: Icon(Icons.chevron_right, color: fg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (current != null) row(current, onNow: true),
+            if (current != null && next != null)
+              Divider(height: 1, indent: 16, endIndent: 16, color: fg.withValues(alpha: 0.2)),
+            if (next != null) row(next, onNow: false),
+          ],
         ),
       ),
     );

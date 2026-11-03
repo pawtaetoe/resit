@@ -31,14 +31,20 @@ ClassSession classSessionFromJson(Map<String, Object?> j) => ClassSession(
       coinciding: j['coinciding'] as bool? ?? false,
     );
 
-/// The class on now, or else the next one to start. Null when none is left.
-ClassSession? nextClass(Iterable<ClassSession> sessions, DateTime now) {
+/// The class on now and the next one to start after now; either can be
+/// null. With overlapping classes, "now" is the one that started first.
+({ClassSession? current, ClassSession? next}) currentAndNextClass(Iterable<ClassSession> sessions, DateTime now) {
+  ClassSession? current;
   ClassSession? next;
   for (final s in sessions) {
     if (!s.end.isAfter(now)) continue;
-    if (next == null || s.start.isBefore(next.start)) next = s;
+    if (!s.start.isAfter(now)) {
+      if (current == null || s.start.isBefore(current.start)) current = s;
+    } else if (next == null || s.start.isBefore(next.start)) {
+      next = s;
+    }
   }
-  return next;
+  return (current: current, next: next);
 }
 
 /// The classes still to come, read from the in4SIT timetable, with a saved
@@ -65,8 +71,9 @@ class UpcomingClassesService {
     }
   }
 
-  /// Reads this week and, if its classes are all over, the weeks after it
-  /// until one has a class. Falls back to the saved copy if in4SIT can't be
+  /// Reads this week and, if no class is left to start in it, the weeks
+  /// after it until one has a class (so during the week's last class there's
+  /// still a next one). Falls back to the saved copy if in4SIT can't be
   /// reached.
   Future<List<ClassSession>> load() async {
     final now = DateTime.now();
@@ -76,7 +83,7 @@ class UpcomingClassesService {
       for (var i = 0; i < weeksAhead; i++) {
         final week = await timetable.week(DateTime(monday.year, monday.month, monday.day + i * 7));
         upcoming.addAll(week.sessions.where((s) => s.end.isAfter(now)));
-        if (upcoming.isNotEmpty) break;
+        if (upcoming.any((s) => s.start.isAfter(now))) break;
       }
       upcoming.sort((a, b) => a.start.compareTo(b.start));
       final prefs = await SharedPreferences.getInstance();
