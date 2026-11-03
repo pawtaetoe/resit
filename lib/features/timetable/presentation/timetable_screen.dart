@@ -119,7 +119,17 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
 
   Color _courseColor(String code) {
     final colors = Colors.primaries;
-    return colors[code.hashCode.abs() % colors.length].shade600;
+    return colors[code.hashCode.abs() % colors.length].shade700;
+  }
+
+  /// White or black, whichever reads better on [background]. On every course
+  /// colour this gives at least 4.5:1 contrast (WCAG AA), in light and dark
+  /// mode alike.
+  static Color _textOn(Color background) {
+    final l = background.computeLuminance();
+    final onWhite = 1.05 / (l + 0.05);
+    final onBlack = (l + 0.05) / 0.05;
+    return onWhite >= onBlack ? Colors.white : Colors.black;
   }
 
   /// Lays out one day's sessions side by side where they overlap in time.
@@ -299,6 +309,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                   Builder(builder: (_) {
                     final s = placed.session;
                     final laneWidth = colWidth / placed.laneCount;
+                    final color = _courseColor(s.courseCode);
                     return Positioned(
                       left: _timeColumnWidth + d * colWidth + placed.lane * laneWidth + 1,
                       top: (s.startMin - startHour * 60) / 60 * _hourHeight + 1,
@@ -309,7 +320,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
                           decoration: BoxDecoration(
-                            color: _courseColor(s.courseCode),
+                            color: color,
                             borderRadius: BorderRadius.circular(4),
                             border: s.coinciding ? Border.all(color: Colors.orangeAccent, width: 1.5) : null,
                           ),
@@ -326,7 +337,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                                 TextSpan(text: '${s.component}\n${s.location}'),
                               ]),
                               overflow: TextOverflow.clip,
-                              style: const TextStyle(color: Colors.white, fontSize: 9, height: 1.2),
+                              style: TextStyle(color: _textOn(color), fontSize: 9, height: 1.2),
                             ),
                           ),
                         ),
