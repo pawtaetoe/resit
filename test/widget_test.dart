@@ -83,6 +83,34 @@ void main() {
     expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
   });
 
+  testWidgets('GPA is hidden on Home until the eye is tapped', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'academic_record': jsonEncode({
+        'creditsEarned': 60,
+        'cumulativeGpa': '4.12',
+        'latestTermGpa': '4.30',
+        'fetchedAt': DateTime.now().millisecondsSinceEpoch,
+      }),
+    });
+    await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
+    await tester.pumpAndSettle();
+
+    // Credits aren't grades, so they stay visible.
+    expect(find.text('60'), findsOneWidget);
+    expect(find.text('4.12'), findsNothing);
+    expect(find.textContaining('4.30'), findsNothing);
+    expect(find.text('•••'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Show grades'));
+    await tester.pumpAndSettle();
+    expect(find.text('4.12'), findsOneWidget);
+    expect(find.text('cumulative GPA · last term 4.30'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Hide grades'));
+    await tester.pumpAndSettle();
+    expect(find.text('4.12'), findsNothing);
+  });
+
   testWidgets('Sign in on Home opens Account and empty fields are flagged', (tester) async {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();

@@ -7,6 +7,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/charts.dart';
+import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
@@ -45,10 +46,19 @@ class _AcademicProgressScreenState extends ConsumerState<AcademicProgressScreen>
     return Scaffold(
       appBar: thumbAppBar('Academic progress'),
       bottomNavigationBar: ThumbBar(
-        child: FilledButton.tonalIcon(
-          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExamResultsScreen())),
-          icon: const Icon(Icons.grading_outlined),
-          label: const Text('Result slips'),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExamResultsScreen())),
+                icon: const Icon(Icons.grading_outlined),
+                label: const Text('Result slips'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const GradeVisibilityButton(inBar: true),
+          ],
         ),
       ),
       body: record == null
@@ -115,26 +125,32 @@ class _AcademicProgressScreenState extends ConsumerState<AcademicProgressScreen>
 
 String _num(double v) => v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1);
 
-class _Totals extends StatelessWidget {
+class _Totals extends ConsumerWidget {
   final AcademicRecord record;
   const _Totals({required this.record});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    Widget stat(String value, String label) => Expanded(
-          child: Card(
-            color: theme.colorScheme.primaryContainer,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(value,
-                      style: theme.textTheme.headlineSmall
-                          ?.copyWith(color: theme.colorScheme.onPrimaryContainer, fontWeight: FontWeight.bold)),
-                  Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
-                ],
+    final gradesVisible = ref.watch(gradesVisibleProvider);
+    // [hidden] is read out instead of the value while it's hidden.
+    Widget stat(String value, String label, {String? hidden}) => Expanded(
+          child: Semantics(
+            label: hidden,
+            excludeSemantics: hidden != null,
+            child: Card(
+              color: theme.colorScheme.primaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(value,
+                        style: theme.textTheme.headlineSmall
+                            ?.copyWith(color: theme.colorScheme.onPrimaryContainer, fontWeight: FontWeight.bold)),
+                    Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -146,7 +162,8 @@ class _Totals extends StatelessWidget {
           stat(_num(record.creditsEarned),
               'credits earned${record.creditsInProgress > 0 ? ' · ${_num(record.creditsInProgress)} in progress' : ''}'),
           const SizedBox(width: 8),
-          stat(record.cumulativeGpa ?? '–', 'cumulative GPA'),
+          stat(gradesVisible ? record.cumulativeGpa ?? '–' : hiddenValue, 'cumulative GPA',
+              hidden: gradesVisible ? null : 'Cumulative GPA, hidden'),
         ],
       ),
     );
@@ -202,26 +219,33 @@ class _GpaCard extends StatelessWidget {
       title: 'GPA by term',
       subtitle: 'Tap a term for its numbers',
       children: [
-        ChartLegend(series: series),
-        const SizedBox(height: 8),
-        LineChart(
-          xLabels: [for (final t in terms) t.label],
-          series: series,
-          yMin: low,
-          yMax: 5,
-          yTicks: ticks,
-          format: (v) => v.toStringAsFixed(2),
-          semanticsLabel: 'GPA by term. ${[
-            for (final t in terms)
-              '${t.name}: trimester ${t.termGpa?.toStringAsFixed(2) ?? 'none'}, cumulative ${t.cumulativeGpa?.toStringAsFixed(2) ?? 'none'}'
-          ].join('. ')}. Latest cumulative GPA ${latest.cumulativeGpa?.toStringAsFixed(2) ?? 'unknown'}.',
-        ),
-        ChartTable(
-          headers: const ['Term', 'Trimester', 'Cumulative'],
-          rows: [
-            for (final t in terms)
-              [t.name, t.termGpa?.toStringAsFixed(2) ?? '–', t.cumulativeGpa?.toStringAsFixed(2) ?? '–'],
-          ],
+        GradeCurtain(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ChartLegend(series: series),
+              const SizedBox(height: 8),
+              LineChart(
+                xLabels: [for (final t in terms) t.label],
+                series: series,
+                yMin: low,
+                yMax: 5,
+                yTicks: ticks,
+                format: (v) => v.toStringAsFixed(2),
+                semanticsLabel: 'GPA by term. ${[
+                  for (final t in terms)
+                    '${t.name}: trimester ${t.termGpa?.toStringAsFixed(2) ?? 'none'}, cumulative ${t.cumulativeGpa?.toStringAsFixed(2) ?? 'none'}'
+                ].join('. ')}. Latest cumulative GPA ${latest.cumulativeGpa?.toStringAsFixed(2) ?? 'unknown'}.',
+              ),
+              ChartTable(
+                headers: const ['Term', 'Trimester', 'Cumulative'],
+                rows: [
+                  for (final t in terms)
+                    [t.name, t.termGpa?.toStringAsFixed(2) ?? '–', t.cumulativeGpa?.toStringAsFixed(2) ?? '–'],
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -271,18 +295,25 @@ class _GradesCard extends StatelessWidget {
       title: 'Grades',
       subtitle: '$total graded ${total == 1 ? 'course' : 'courses'}',
       children: [
-        ColumnChart(
-          labels: grades,
-          values: [for (final g in grades) counts[g]!.toDouble()],
-          color: c.series1,
-          format: (v) => '${v.round()}',
-          semanticsLabel: 'Grades. ${[for (final g in grades) '$g: ${counts[g]}'].join(', ')}.',
-        ),
-        ChartTable(
-          headers: const ['Grade', 'Courses'],
-          rows: [
-            for (final g in grades) [g, '${counts[g]}'],
-          ],
+        GradeCurtain(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ColumnChart(
+                labels: grades,
+                values: [for (final g in grades) counts[g]!.toDouble()],
+                color: c.series1,
+                format: (v) => '${v.round()}',
+                semanticsLabel: 'Grades. ${[for (final g in grades) '$g: ${counts[g]}'].join(', ')}.',
+              ),
+              ChartTable(
+                headers: const ['Grade', 'Courses'],
+                rows: [
+                  for (final g in grades) [g, '${counts[g]}'],
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );
