@@ -12,6 +12,7 @@ import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/features/timetable/data/upcoming_classes.dart';
 
 final secureStorageProvider = Provider<SecureStorage>((ref) {
   return SecureStorage();
@@ -133,6 +134,22 @@ final nextBookingProvider = FutureProvider.autoDispose<Booking?>((ref) async {
     }
   }
   return next;
+});
+
+final upcomingClassesServiceProvider = Provider<UpcomingClassesService>((ref) {
+  return UpcomingClassesService(ref.watch(timetableServiceProvider));
+});
+
+/// The last saved list of upcoming classes, shown on Home straight away.
+final savedUpcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) {
+  return ref.watch(upcomingClassesServiceProvider).saved();
+});
+
+/// Upcoming classes from in4SIT, read once per sign-in (invalidate to
+/// re-read). Until it arrives, Home shows [savedUpcomingClassesProvider].
+final upcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) async {
+  if (!ref.watch(authStateProvider)) return ref.watch(upcomingClassesServiceProvider).saved();
+  return ref.watch(upcomingClassesServiceProvider).load();
 });
 
 final academicRecordServiceProvider = Provider<AcademicRecordService>((ref) {

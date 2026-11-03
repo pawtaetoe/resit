@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -7,9 +9,12 @@ import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/services/presentation/overview_grid.dart';
+import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/features/timetable/data/upcoming_classes.dart';
+import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 
 /// Home: the dashboard. Sign-in status only when there's something to do,
-/// the next booking, and the overview of the trimester, credits and GPA.
+/// the next class and the next booking, and the overview of the trimester, credits and GPA.
 /// The tasks themselves are on the Services tab.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -41,6 +46,7 @@ class HomeScreen extends ConsumerWidget {
             // Only shown when there's something to act on (not signed in yet,
             // or signing in); when all is well it stays out of the way.
             const _SessionBanner(),
+            const _NextClassCard(),
             const _NextBookingCard(),
             const SizedBox(height: 16),
             // At a glance: trimester week, countdowns, credits, GPA, graduation.
@@ -118,8 +124,7 @@ class _NextBookingCard extends ConsumerWidget {
     final now = DateTime.now();
     final when = start == null
         ? '${booking.date}, ${booking.timeRange}'
-        : '${DateUtils.isSameDay(start, now) ? 'Today' : DateUtils.isSameDay(start, now.add(const Duration(days: 1))) ? 'Tomorrow' : DateFormat('EEE d MMM').format(start)}'
-            ', ${booking.timeRange.replaceAll('-', ' – ')}';
+        : '${_dayLabel(start, now)}, ${booking.timeRange.replaceAll('-', ' – ')}';
 
     return Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -133,6 +138,79 @@ class _NextBookingCard extends ConsumerWidget {
               style: TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSecondaryContainer)),
           subtitle: Text(when, style: TextStyle(color: theme.colorScheme.onSecondaryContainer)),
           trailing: Icon(Icons.chevron_right, color: theme.colorScheme.onSecondaryContainer),
+        ),
+      ),
+    );
+  }
+}
+
+String _dayLabel(DateTime day, DateTime now) => DateUtils.isSameDay(day, now)
+    ? 'Today'
+    : DateUtils.isSameDay(day, now.add(const Duration(days: 1)))
+        ? 'Tomorrow'
+        : DateFormat('EEE d MMM').format(day);
+
+/// The class on now, or the next one, from the in4SIT timetable. Shows the
+/// saved copy straight away and moves on by itself as classes end. Hidden
+/// when there's nothing to show.
+class _NextClassCard extends ConsumerStatefulWidget {
+  const _NextClassCard();
+
+  @override
+  ConsumerState<_NextClassCard> createState() => _NextClassCardState();
+}
+
+class _NextClassCardState extends ConsumerState<_NextClassCard> {
+  late final Timer _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // Re-checks every minute, so "Now" and the next class stay current.
+    _tick = Timer.periodic(const Duration(minutes: 1), (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _tick.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(upcomingClassesProvider);
+    final sessions = async.valueOrNull ?? ref.watch(savedUpcomingClassesProvider).valueOrNull ?? const [];
+    final now = DateTime.now();
+    final next = nextClass(sessions, now);
+
+    // Every class read last time has ended: read the timetable again.
+    if (next == null && sessions.isNotEmpty && async.hasValue && ref.read(authStateProvider)) {
+      Future.microtask(() => ref.invalidate(upcomingClassesProvider));
+    }
+    if (next == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final fg = theme.colorScheme.onPrimaryContainer;
+    final onNow = !next.start.isAfter(now);
+    const time = ClassSession.formatMinutes;
+    final when = onNow
+        ? 'Now, until ${time(next.endMin)}'
+        : '${_dayLabel(next.date, now)}, ${time(next.startMin)} – ${time(next.endMin)}';
+    final where = next.location.trim();
+    final what = [next.courseCode, if (next.component.isNotEmpty) next.component].join(' ');
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Card(
+        color: theme.colorScheme.primaryContainer,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TimetableScreen())),
+          leading: Icon(onNow ? Icons.play_circle_outline : Icons.class_outlined, color: fg),
+          title: Text('${onNow ? 'In class' : 'Next class'}: $what',
+              style: TextStyle(fontWeight: FontWeight.w600, color: fg)),
+          subtitle: Text(where.isEmpty ? when : '$when · $where', style: TextStyle(color: fg)),
+          trailing: Icon(Icons.chevron_right, color: fg),
         ),
       ),
     );
