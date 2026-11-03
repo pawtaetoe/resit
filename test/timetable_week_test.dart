@@ -1,4 +1,10 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/network/session_client.dart';
+import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
 String _td(String text, {int rowspan = 1}) =>
@@ -83,5 +89,34 @@ void main() {
 
   test('returns null for a page without the grid', () {
     expect(parseWeek('<html><body>Sign in</body></html>'), isNull);
+  });
+
+  test('reopens the page and asks again when in4SIT has dropped it', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    FlutterSecureStorage.setMockInitialValues({});
+    final page = Uri.parse(TimetableService.pageUrl);
+    var gets = 0;
+    var posts = 0;
+    final mock = MockClient((request) async {
+      if (request.method == 'GET') {
+        gets++;
+        return http.Response(
+            "<form name='win0'><input name='ICStateNum' value='1'></form>${_fixture()}", 200,
+            request: http.Request('GET', page));
+      }
+      posts++;
+      // The first change of week finds the page gone, as after a long idle
+      // or another in4SIT page opened with the same sign-in.
+      return posts == 1
+          ? http.Response('<html><body>This page is no longer available.</body></html>', 200, request: request)
+          : http.Response(_fixture(), 200, request: request);
+    });
+    final service = TimetableService(AuthService(SessionClient(mock), SecureStorage()));
+
+    final week = await service.week(DateTime(2026, 10, 12));
+
+    expect(week.sessions, isNotEmpty);
+    expect(gets, 2, reason: 'opened again after the page was lost');
+    expect(posts, 2);
   });
 }

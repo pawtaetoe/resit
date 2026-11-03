@@ -72,7 +72,7 @@ class TimetableService {
     DateTime monday, {
     void Function(MfaChallenge challenge)? onMfaChallenge,
   }) {
-    return _serial(() async {
+    Future<WeekSchedule> load() async {
       if (!_ready) await _open(onMfaChallenge);
 
       final current = _current;
@@ -84,6 +84,20 @@ class TimetableService {
         debugLog('Timetable: asked for $monday but in4sit returned ${week.monday}');
       }
       return week;
+    }
+
+    return _serial(() async {
+      try {
+        return await load();
+      } on _PageLost {
+        // in4SIT dropped the page we kept open: it does that after about 20
+        // minutes idle, or when the same sign-in opens another in4SIT page
+        // (e.g. exam results being read in the background). Open it afresh
+        // and ask again, once, instead of showing an error.
+        debugLog('Timetable: page state lost; reopening');
+        reset();
+        return await load();
+      }
     });
   }
 
@@ -172,9 +186,11 @@ class TimetableService {
 
     final week = response.statusCode == 200 ? parseWeek(response.body) : null;
     if (week == null) {
-      // Most likely the in4sit session lapsed; start over on the next call.
+      final start = response.body.replaceAll(RegExp(r'\s+'), ' ');
+      debugLog('Timetable: no week in the reply. Starts: ${start.substring(0, start.length.clamp(0, 300))}');
+      // Start over on the next call.
       reset();
-      throw Exception('in4sit did not return the weekly schedule. Pull to refresh to try again.');
+      throw const _PageLost();
     }
 
     _absorb(response.body);
@@ -240,6 +256,14 @@ class TimetableService {
     _form['ICAction'] = 'None';
     _form['ICResubmit'] = '0';
   }
+}
+
+/// in4SIT answered without the weekly grid: the page state we kept is gone.
+class _PageLost implements Exception {
+  const _PageLost();
+
+  @override
+  String toString() => "in4SIT didn't send this week's timetable. Try again in a moment.";
 }
 
 /// PeopleSoft answers ICAJAX requests with XML whose <FIELD> elements wrap the
