@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
@@ -39,6 +40,7 @@ class OverviewGrid extends ConsumerWidget {
     final record = recordAsync.valueOrNull ?? ref.watch(savedAcademicRecordProvider).valueOrNull;
     final signedIn = ref.watch(authStateProvider);
     final graduation = ref.watch(graduationDateProvider).valueOrNull;
+    final gradesVisible = ref.watch(gradesVisibleProvider);
     final d = DateFormat('d MMM');
     void openCalendar() => _open(context, const AcademicCalendarScreen());
     void openProgress() => _open(context, const AcademicProgressScreen());
@@ -118,11 +120,14 @@ class OverviewGrid extends ConsumerWidget {
         onTap: openProgress,
       ));
       if (record.cumulativeGpa != null) {
+        // Hidden until the user taps the eye.
         tiles.add(_Tile(
           icon: Icons.grade_outlined,
-          value: record.cumulativeGpa!,
+          value: gradesVisible ? record.cumulativeGpa! : hiddenValue,
           caption: 'cumulative GPA'
-              '${record.latestTermGpa != null ? ' · last term ${record.latestTermGpa}' : ''}',
+              '${record.latestTermGpa != null ? ' · last term ${gradesVisible ? record.latestTermGpa : hiddenValue}' : ''}',
+          semanticsLabel: gradesVisible ? null : 'Cumulative GPA, hidden',
+          action: const GradeVisibilityButton(),
           onTap: openProgress,
         ));
       }
@@ -186,18 +191,31 @@ class _Tile extends StatelessWidget {
   final String caption;
   final VoidCallback? onTap;
 
-  const _Tile({required this.icon, required this.value, required this.caption, this.onTap});
+  /// A small button in the top-right corner (e.g. show/hide grades).
+  final Widget? action;
+
+  /// Read out instead of "value, caption" (e.g. when the value is hidden).
+  final String? semanticsLabel;
+
+  const _Tile({
+    required this.icon,
+    required this.value,
+    required this.caption,
+    this.onTap,
+    this.action,
+    this.semanticsLabel,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Card(
+    final tile = Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Semantics(
-          label: '$value, $caption',
+          label: semanticsLabel ?? '$value, $caption',
           button: onTap != null,
           excludeSemantics: true,
           child: Padding(
@@ -225,5 +243,8 @@ class _Tile extends StatelessWidget {
         ),
       ),
     );
+    if (action == null) return tile;
+    // Over the corner, so the button doesn't make the tile taller.
+    return Stack(children: [tile, Positioned(top: 4, right: 4, child: action!)]);
   }
 }

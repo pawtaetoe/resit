@@ -5,6 +5,7 @@ import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
@@ -151,6 +152,8 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
               ),
             ),
             const SizedBox(width: 8),
+            const GradeVisibilityButton(inBar: true),
+            const SizedBox(width: 8),
             SizedBox.square(
               dimension: ThumbBar.heightOf(context),
               child: IconButton.outlined(
@@ -251,13 +254,15 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
   }
 }
 
-class _ResultSlip extends StatelessWidget {
+class _ResultSlip extends ConsumerWidget {
   final ExamResults results;
   const _ResultSlip({required this.results});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // Grades and GPAs stay hidden until the user taps the eye.
+    final visible = ref.watch(gradesVisibleProvider);
     final muted = theme.colorScheme.onSurfaceVariant;
     final graded = results.courses.where((c) => !c.inProgress).toList();
     final credits = graded.fold<double>(0, (sum, c) => sum + (double.tryParse(c.credits) ?? 0));
@@ -287,12 +292,12 @@ class _ResultSlip extends StatelessWidget {
         const SizedBox(height: 16),
         Row(
           children: [
-            Expanded(child: _Stat(label: 'Trimester GPA', value: results.value('Trimester GPA'))),
+            Expanded(child: _Stat(label: 'Trimester GPA', value: results.value('Trimester GPA'), hidden: !visible)),
             const SizedBox(width: 12),
-            Expanded(child: _Stat(label: 'Cumulative GPA', value: results.value('Cumulative GPA'))),
+            Expanded(child: _Stat(label: 'Cumulative GPA', value: results.value('Cumulative GPA'), hidden: !visible)),
           ],
         ),
-        if (standing != null && standing != '-') ...[
+        if (visible && standing != null && standing != '-') ...[
           const SizedBox(height: 8),
           StatusPill(label: 'Academic standing: $standing', tone: Tone.info),
         ],
@@ -309,7 +314,7 @@ class _ResultSlip extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         for (final c in results.courses)
-          Padding(padding: const EdgeInsets.only(bottom: 8), child: _CourseCard(course: c)),
+          Padding(padding: const EdgeInsets.only(bottom: 8), child: _CourseCard(course: c, hidden: !visible)),
         if (results.note != null) ...[
           const SizedBox(height: 4),
           Row(
@@ -357,12 +362,13 @@ class _ResultSlip extends StatelessWidget {
 class _Stat extends StatelessWidget {
   final String label;
   final String? value;
-  const _Stat({required this.label, this.value});
+  final bool hidden;
+  const _Stat({required this.label, this.value, this.hidden = false});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
+    final card = Card(
       color: theme.colorScheme.primaryContainer,
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -372,7 +378,11 @@ class _Stat extends StatelessWidget {
             Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
             const SizedBox(height: 4),
             Text(
-              value == null || value!.isEmpty ? '–' : value!,
+              hidden
+                  ? hiddenValue
+                  : value == null || value!.isEmpty
+                      ? '–'
+                      : value!,
               style: theme.textTheme.headlineMedium?.copyWith(
                 color: theme.colorScheme.onPrimaryContainer,
                 fontWeight: FontWeight.bold,
@@ -382,12 +392,18 @@ class _Stat extends StatelessWidget {
         ),
       ),
     );
+    if (!hidden) return card;
+    return Semantics(label: '$label, hidden', excludeSemantics: true, child: card);
   }
 }
 
 class _CourseCard extends StatelessWidget {
   final CourseResult course;
-  const _CourseCard({required this.course});
+
+  /// Grade and grade points covered, and the badge left uncoloured so its
+  /// colour doesn't give the grade away.
+  final bool hidden;
+  const _CourseCard({required this.course, this.hidden = false});
 
   /// Colour by grade band: A greens, B blues, C/D ambers, F red, others grey.
   Tone _tone() {
@@ -402,11 +418,11 @@ class _CourseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final (bg, fg) = _tone().colors(theme.colorScheme);
+    final (bg, fg) = (hidden ? Tone.neutral : _tone()).colors(theme.colorScheme);
     final facts = [
       course.code,
       if (course.credits.isNotEmpty) '${course.credits} credits',
-      if (!course.inProgress && course.gradePoints.isNotEmpty) '${course.gradePoints} grade points',
+      if (!hidden && !course.inProgress && course.gradePoints.isNotEmpty) '${course.gradePoints} grade points',
       if (course.remark.isNotEmpty) course.remark,
     ];
 
@@ -416,7 +432,11 @@ class _CourseCard extends StatelessWidget {
         child: Row(
           children: [
             Semantics(
-              label: course.inProgress ? 'In progress' : 'Grade ${course.grade}',
+              label: course.inProgress
+                  ? 'In progress'
+                  : hidden
+                      ? 'Grade hidden'
+                      : 'Grade ${course.grade}',
               excludeSemantics: true,
               child: Container(
                 width: 52,
@@ -428,7 +448,11 @@ class _CourseCard extends StatelessWidget {
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    course.grade.isEmpty ? '–' : course.grade,
+                    course.grade.isEmpty
+                        ? '–'
+                        : hidden && !course.inProgress
+                            ? hiddenValue
+                            : course.grade,
                     maxLines: 1,
                     style: theme.textTheme.titleMedium?.copyWith(color: fg, fontWeight: FontWeight.bold),
                   ),
