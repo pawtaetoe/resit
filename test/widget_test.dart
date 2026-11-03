@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -29,6 +31,56 @@ void main() {
       await tester.scrollUntilVisible(find.text(task), 100);
       expect(find.text(task), findsOneWidget, reason: task);
     }
+  });
+
+  testWidgets('Home shows the next class from the saved timetable', (tester) async {
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    SharedPreferences.setMockInitialValues({
+      'upcoming_classes': jsonEncode([
+        {
+          'date': tomorrow.toIso8601String(),
+          'course': 'CSC 2101',
+          'section': 'L1',
+          'component': 'Lecture',
+          'start': 9 * 60,
+          'end': 11 * 60,
+          'location': 'E2-03-01',
+        },
+      ]),
+    });
+    await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
+    expect(find.textContaining('Now:'), findsNothing);
+    expect(find.text('Tomorrow, 09:00 – 11:00 · E2-03-01'), findsOneWidget);
+  });
+
+  testWidgets('During a class, Home shows it and the next one', (tester) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final minute = now.hour * 60 + now.minute;
+    Map<String, Object?> cls(DateTime day, String code, int start, int end) => {
+          'date': day.toIso8601String(),
+          'course': code,
+          'section': 'L1',
+          'component': 'Lecture',
+          'start': start,
+          'end': end,
+          'location': 'E2-03-01',
+        };
+    SharedPreferences.setMockInitialValues({
+      'upcoming_classes': jsonEncode([
+        cls(today, 'CSC 1001', minute - 30, minute + 60),
+        cls(today.add(const Duration(days: 1)), 'CSC 2101', 9 * 60, 11 * 60),
+      ]),
+    });
+    await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Now: CSC 1001 Lecture'), findsOneWidget);
+    expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
   });
 
   testWidgets('Sign in on Home opens Account and empty fields are flagged', (tester) async {
