@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/core/network/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/auth/auth_service.dart';
@@ -42,8 +43,12 @@ final bookingServiceProvider = Provider<BookingService>((ref) {
   );
 });
 
+/// The one queue every in4SIT (PeopleSoft) request goes through, so the
+/// timetable and the exam results don't knock out each other's page.
+final in4SitQueueProvider = Provider<In4SitQueue>((ref) => In4SitQueue());
+
 final timetableServiceProvider = Provider<TimetableService>((ref) {
-  return TimetableService(ref.watch(authServiceProvider));
+  return TimetableService(ref.watch(authServiceProvider), queue: ref.watch(in4SitQueueProvider));
 });
 
 // A provider to manage the login state globally
@@ -99,7 +104,7 @@ final totpConfigProvider = FutureProvider<TotpConfig?>((ref) async {
 });
 
 final examServiceProvider = Provider<ExamService>((ref) {
-  return ExamService(ref.watch(authServiceProvider));
+  return ExamService(ref.watch(authServiceProvider), queue: ref.watch(in4SitQueueProvider));
 });
 
 final academicCalendarServiceProvider = Provider<AcademicCalendarService>((ref) => AcademicCalendarService());
