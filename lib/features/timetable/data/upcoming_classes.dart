@@ -92,6 +92,9 @@ class UpcomingClassesService {
 
   Future<List<ClassSession>> saved() async => (await _read())?.sessions ?? const [];
 
+  /// When the saved copy was read from in4SIT, if known.
+  Future<DateTime?> savedAt() async => (await _read())?.fetchedAt;
+
   /// Reads this week and, if no class is left to start in it, the weeks
   /// after it until one has a class (so during the week's last class there's
   /// still a next one). Skips in4SIT when the saved copy was read within

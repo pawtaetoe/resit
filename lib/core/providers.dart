@@ -151,6 +151,12 @@ final savedUpcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) {
   return ref.watch(upcomingClassesServiceProvider).saved();
 });
 
+/// When the saved upcoming classes were read from in4SIT ("Updated 2 h ago").
+final upcomingClassesUpdatedProvider = FutureProvider<DateTime?>((ref) {
+  ref.watch(upcomingClassesProvider);
+  return ref.watch(upcomingClassesServiceProvider).savedAt();
+});
+
 /// Upcoming classes from in4SIT, read once per sign-in (invalidate to
 /// re-read). Until it arrives, Home shows [savedUpcomingClassesProvider].
 final upcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) async {

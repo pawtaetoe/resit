@@ -65,7 +65,7 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
       _error = null;
     });
     final service = ref.read(lmsServiceProvider);
-    Future<List<LmsCourse>> fetch() => service.courses(onMfaChallenge: (c) {
+    Future<List<LmsCourse>> fetch() => service.courses(force: refresh, onMfaChallenge: (c) {
           if (mounted) setState(() => _challenge = c);
         });
     try {

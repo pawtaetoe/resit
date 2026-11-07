@@ -21,11 +21,16 @@ class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   Future<void> _refresh(WidgetRef ref) async {
-    ref.invalidate(upcomingClassesProvider);
     ref.invalidate(nextBookingProvider);
     ref.invalidate(academicCalendarProvider);
     await Future.wait([
-      ref.read(upcomingClassesProvider.future).catchError((_) => const <ClassSession>[]),
+      // Pulling down means "now": skip the timetable's 1-hour freshness window.
+      if (ref.read(authStateProvider))
+        ref
+            .read(upcomingClassesServiceProvider)
+            .load(force: true)
+            .then((_) => ref.invalidate(upcomingClassesProvider))
+            .catchError((_) {}),
       ref.read(nextBookingProvider.future).catchError((_) => null),
       ref.read(academicCalendarProvider.future).then((_) {}).catchError((_) {}),
     ]);
@@ -230,6 +235,15 @@ class _UpNextCardState extends ConsumerState<_UpNextCard> {
             ],
           ),
         ),
+        // How fresh the classes are, so an old saved timetable isn't taken as live.
+        if (ref.watch(upcomingClassesUpdatedProvider).valueOrNull case final at? when current != null || next != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+            child: Text(
+              '${updatedAgo(at, now)} · pull down to refresh',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
       ],
       ),
     );

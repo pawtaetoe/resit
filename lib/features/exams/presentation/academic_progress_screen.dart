@@ -75,11 +75,19 @@ class _AcademicProgressScreenState extends ConsumerState<AcademicProgressScreen>
                       onPressed: _refresh, icon: const Icon(Icons.refresh), label: const Text('Try again')),
                 )
               : async.isLoading
-                  ? const MessageView(
-                      icon: Icons.insights_outlined,
-                      title: 'Adding up your results…',
-                      message: 'Reading each term from in4SIT. This can take a little while the first time.',
-                      action: SizedBox(width: 160, child: LinearProgressIndicator()),
+                  ? ValueListenableBuilder<(int, int)?>(
+                      valueListenable: ref.watch(academicRecordServiceProvider).progress,
+                      builder: (context, p, _) => MessageView(
+                        icon: Icons.insights_outlined,
+                        title: 'Adding up your results…',
+                        message: p == null
+                            ? 'Reading each term from in4SIT. This can take a little while the first time.'
+                            : 'Reading term ${p.$1 + 1} of ${p.$2} from in4SIT.',
+                        action: SizedBox(
+                          width: 160,
+                          child: LinearProgressIndicator(value: p == null || p.$2 == 0 ? null : p.$1 / p.$2),
+                        ),
+                      ),
                     )
                   : MessageView(
                       icon: Icons.insights_outlined,

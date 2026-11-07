@@ -63,7 +63,7 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
     }
   }
 
-  Future<void> _fetchBookings() async {
+  Future<void> _fetchBookings({bool force = false}) async {
     final tab = _tab;
     setState(() {
       _isLoading = true;
@@ -75,7 +75,7 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       List<Booking> list;
 
       if (tab == _Tab.upcoming) {
-        final raw = await service.getBookings(bookingStatus: 'current');
+        final raw = await service.getBookings(bookingStatus: 'current', force: force);
         list = raw.where((b) => b.status.toLowerCase() == 'confirmed').toList();
         // Soonest first: that's the one you need next.
         list.sort(
@@ -84,13 +84,13 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
         // History plus current bookings that are no longer confirmed.
         List<Booking> history = [];
         try {
-          history = await service.getBookings(bookingStatus: 'history');
+          history = await service.getBookings(bookingStatus: 'history', force: force);
         } catch (_) {
           // History may be unavailable; show what we have.
         }
         List<Booking> current = [];
         try {
-          current = await service.getBookings(bookingStatus: 'current');
+          current = await service.getBookings(bookingStatus: 'current', force: force);
         } catch (_) {}
 
         final combined = <String, Booking>{};
@@ -153,7 +153,7 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
 
   Future<void> _refresh() {
     ref.invalidate(quotaDataProvider);
-    return _fetchBookings();
+    return _fetchBookings(force: true);
   }
 
   void _copyRef(String ref) {
