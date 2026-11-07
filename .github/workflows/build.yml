@@ -1,4 +1,5 @@
-# Builds reSIT for Android (.apk), Linux (.deb) and Windows (.exe installer
+# Builds reSIT for Android (.apk, plus a Play Store .aab when the release key
+# is set up), Linux (.deb) and Windows (.exe installer
 # and portable .zip).
 #
 # - Pull requests and manual runs: test, then build all three; the files are
@@ -10,7 +11,8 @@
 #   version.
 #
 # Android signing (optional): add these repository secrets to sign the APK
-# with your release key. Without them the APK is signed with a debug key,
+# and build the .aab with your release key (the key lives in keys/, which is
+# gitignored). Without them only the APK is built, signed with a debug key,
 # which installs fine but can't go to the Play Store.
 #   ANDROID_KEYSTORE_BASE64  base64 of the .jks keystore file
 #   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
@@ -68,7 +70,7 @@ jobs:
       - run: flutter test
 
   android:
-    name: Android (.apk)
+    name: Android (.apk, .aab)
     needs: test
     runs-on: ubuntu-24.04
     env:
@@ -76,6 +78,18 @@ jobs:
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history, to count commits below
+      - name: Work out the Android version
+        # versionCode = commits on main's first-parent line, minus an offset
+        # that lines it up with the Play Store (commit 20 was code 15). Each
+        # merge or push to main is one up; Play rejects a code it has seen.
+        # versionName is pubspec.yaml's version (bump it there for releases).
+        run: |
+          code=$(( $(git rev-list --count --first-parent HEAD) - 5 ))
+          name="$(grep -m1 '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([^+[:space:]]+).*/\1/')"
+          echo "BUILD_FLAGS=--build-name=$name --build-number=$code" >> "$GITHUB_ENV"
+          echo "Android version: $name ($code)"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -101,15 +115,24 @@ jobs:
             echo "keyAlias=$KEY_ALIAS"
             echo "keyPassword=$KEY_PASSWORD"
           } > android/key.properties
-      - run: flutter build apk --release
+      - run: flutter build apk --release $BUILD_FLAGS
       - name: Name the APK
         run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk "dist/resit-${VERSION}.apk"
+      # A debug-signed bundle is useless to the Play Store, so only build it
+      # with the release key.
+      - name: Build the app bundle
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          flutter build appbundle --release $BUILD_FLAGS
+          cp build/app/outputs/bundle/release/app-release.aab "dist/resit-${VERSION}.aab"
       - uses: actions/upload-artifact@v4
         with:
           name: resit-android
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*.aab
           if-no-files-found: error
 
   linux:
