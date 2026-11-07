@@ -16,6 +16,14 @@
 # which installs fine but can't go to the Play Store.
 #   ANDROID_KEYSTORE_BASE64  base64 of the .jks keystore file
 #   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#
+# Google Play (optional): every push to main also uploads the .aab to a Play
+# testing track when this repository secret is set:
+#   PLAY_SERVICE_ACCOUNT_JSON  the JSON key of a Google Cloud service account
+#                              invited in Play Console with release rights
+# The track is the repository variable PLAY_TRACK (default: internal), and
+# the release status PLAY_RELEASE_STATUS (default: completed; use draft while
+# the app has never been published on Play).
 name: Build
 
 on:
@@ -73,6 +81,9 @@ jobs:
     name: Android (.apk, .aab)
     needs: test
     runs-on: ubuntu-24.04
+    outputs:
+      # e.g. "1.0.12 (27)": the name and code Play shows for the release.
+      play-name: ${{ steps.android-version.outputs.label }}
     env:
       VERSION: ${{ needs.test.outputs.version }}
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -81,6 +92,7 @@ jobs:
         with:
           fetch-depth: 0 # full history, to count commits below
       - name: Work out the Android version
+        id: android-version
         # versionCode = commits on main's first-parent line, minus an offset
         # that lines it up with the Play Store (commit 20 was code 15). Each
         # merge or push to main is one up; Play rejects a code it has seen.
@@ -90,6 +102,7 @@ jobs:
           name="$(grep -m1 '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([^+[:space:]]+).*/\1/')"
           echo "BUILD_FLAGS=--build-name=$name --build-number=$code" >> "$GITHUB_ENV"
           echo "Android version: $name ($code)"
+          echo "label=$name ($code)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -226,3 +239,46 @@ jobs:
           files: dist/*
           generate_release_notes: true
           make_latest: true
+
+  play:
+    name: Google Play (.aab)
+    # Pushes to main only: each one has a new versionCode (see the Android
+    # job). A tag would rebuild a commit main already uploaded, and Play
+    # rejects a versionCode it has seen.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: android
+    runs-on: ubuntu-24.04
+    env:
+      PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Check the Play key is set up
+        id: check
+        run: |
+          if [ -z "$PLAY_JSON" ]; then
+            echo "::notice::PLAY_SERVICE_ACCOUNT_JSON isn't set, so nothing goes to Google Play."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          name: resit-android
+          path: dist
+      - name: Find the app bundle
+        if: steps.check.outputs.skip != 'true'
+        id: aab
+        run: |
+          aab=$(ls dist/*.aab 2>/dev/null | head -1)
+          if [ -z "$aab" ]; then
+            echo "::error::No .aab was built. The Android release key secrets (ANDROID_KEYSTORE_*) are needed for one."
+            exit 1
+          fi
+          echo "file=$aab" >> "$GITHUB_OUTPUT"
+      - uses: r0adkll/upload-google-play@v1
+        if: steps.check.outputs.skip != 'true'
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.fluminaris.resit
+          releaseFiles: ${{ steps.aab.outputs.file }}
+          releaseName: ${{ needs.android.outputs.play-name }}
+          track: ${{ vars.PLAY_TRACK || 'internal' }}
+          status: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
