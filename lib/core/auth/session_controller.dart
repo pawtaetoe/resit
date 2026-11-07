@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/storage/secure_storage.dart';
@@ -59,12 +60,43 @@ class SessionController extends StateNotifier<SessionState> {
 
   Future<bool>? _running;
   DateTime? _lastConfirmed;
+  bool _cancelled = false;
+  AppLifecycleListener? _lifecycle;
 
   /// A session confirmed this recently isn't re-checked when the app comes
   /// back to the foreground.
   static const recheckAfter = Duration(minutes: 2);
 
-  SessionController(this._auth, this._storage) : super(const SessionState());
+  /// With [watchLifecycle] (the default), the session keep-alive is paused
+  /// while the app is in the background and restarted when it comes back
+  /// (needs the Flutter binding, which the app and widget tests have).
+  SessionController(this._auth, this._storage, {bool watchLifecycle = true}) : super(const SessionState()) {
+    if (watchLifecycle) {
+      _lifecycle = AppLifecycleListener(onStateChange: appLifecycleChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    _lifecycle?.dispose();
+    super.dispose();
+  }
+
+  /// Pauses the keep-alive while the app can't be seen, resumes it when it
+  /// is in front again. Public so the app (or a test) can drive it directly.
+  void appLifecycleChanged(AppLifecycleState lifecycle) {
+    switch (lifecycle) {
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _auth.pauseKeepAlive();
+      case AppLifecycleState.resumed:
+        _auth.resumeKeepAlive();
+      case AppLifecycleState.inactive:
+        // Passing through (a dialog, the app switcher): leave it as it is.
+        break;
+    }
+  }
 
   /// Makes sure there's a working session, signing in again if needed.
   /// With [force], skips the check and signs in afresh (for when another
@@ -74,20 +106,45 @@ class SessionController extends StateNotifier<SessionState> {
     return _running ??= _ensure(force: force).whenComplete(() => _running = null);
   }
 
-  /// Signs in with newly entered credentials (from Account).
+  /// Signs in with newly entered credentials (from Account). They are only
+  /// saved once ADFS has accepted them, so a mistyped password isn't retried
+  /// automatically on every resume (which could lock the account).
   Future<bool> signInWith(String username, String password) async {
     await _running;
-    await _storage.saveCredentials(username, password);
-    await _storage.setSignedOut(false);
-    return ensureSignedIn(force: true);
+    return _running ??= _ensure(force: true, entered: (username: username, password: password))
+        .whenComplete(() => _running = null);
+  }
+
+  /// Stops a sign-in in progress (e.g. one waiting for approval in
+  /// Microsoft Authenticator). It ends signed out, without an error, and the
+  /// app doesn't sign itself back in until the user signs in again from
+  /// Account (the saved details are kept). Does nothing when no sign-in is
+  /// running.
+  Future<void> cancelSignIn() async {
+    final running = _running;
+    if (running == null) return;
+    _cancelled = true;
+    // Flag first: the cancelled sign-in drops the session, and the "session
+    // dropped" listener must see that this was on purpose.
+    await _storage.setSignedOut(true);
+    _auth.cancelSignIn();
+    await running;
   }
 
   /// Signs out and stops automatic sign-in until the user signs in again.
+  /// A sign-in still waiting (e.g. for MFA approval) is cancelled rather
+  /// than waited for. ADFS is asked to end its session too (best effort, a
+  /// few seconds at most).
   Future<void> signOut({bool forgetDetails = false}) async {
-    await _running;
     // Flag first: logging out triggers the "session dropped" listener, which
     // must see that this was on purpose.
     await _storage.setSignedOut(true);
+    final running = _running;
+    if (running != null) {
+      _cancelled = true;
+      _auth.cancelSignIn();
+      await running;
+    }
     await _auth.logout();
     if (forgetDetails) {
       await _storage.clearCredentials();
@@ -97,7 +154,11 @@ class SessionController extends StateNotifier<SessionState> {
     state = const SessionState(phase: SessionPhase.signedOut);
   }
 
-  Future<bool> _ensure({required bool force}) async {
+  /// [entered] are credentials just typed in Account: used instead of the
+  /// saved ones, and saved (with automatic sign-in turned back on) only if
+  /// they work.
+  Future<bool> _ensure({required bool force, ({String username, String password})? entered}) async {
+    _cancelled = false;
     final recent = _lastConfirmed != null && DateTime.now().difference(_lastConfirmed!) < recheckAfter;
     if (!force && recent && _auth.isActive) return true;
 
@@ -107,23 +168,32 @@ class SessionController extends StateNotifier<SessionState> {
       if (mounted) state = state.copyWith(log: List.of(log), error: state.error);
     }
 
+    bool stopped() {
+      if (!_cancelled) return false;
+      log.add('Sign-in cancelled.');
+      state = SessionState(phase: SessionPhase.signedOut, log: log);
+      return true;
+    }
+
     state = SessionState(phase: SessionPhase.checking, log: log);
 
     try {
       if (!force && await _auth.resumeSession()) {
         return _done(true, log);
       }
-      if (await _storage.isSignedOut()) {
+      if (stopped()) return false;
+      if (entered == null && await _storage.isSignedOut()) {
         state = SessionState(phase: SessionPhase.signedOut, log: log);
         return false;
       }
-      final creds = await _storage.getCredentials();
-      final username = creds['username'];
-      final password = creds['password'];
+      final creds = entered == null ? await _storage.getCredentials() : null;
+      final username = entered?.username ?? creds?['username'];
+      final password = entered?.password ?? creds?['password'];
       if (username == null || username.isEmpty || password == null || password.isEmpty) {
         state = SessionState(phase: SessionPhase.signedOut, log: log);
         return false;
       }
+      if (stopped()) return false;
 
       state = SessionState(phase: SessionPhase.signingIn, log: log);
       addLog(force ? 'Signing in afresh...' : 'Saved session has expired, signing in again...');
@@ -135,6 +205,7 @@ class SessionController extends StateNotifier<SessionState> {
           if (mounted) state = state.copyWith(challenge: challenge, log: List.of(log));
         },
       );
+      if (stopped()) return false;
       if (!ok) {
         state = SessionState(
           phase: SessionPhase.failed,
@@ -143,8 +214,17 @@ class SessionController extends StateNotifier<SessionState> {
         );
         return false;
       }
+      if (entered != null) {
+        await _storage.saveCredentials(entered.username, entered.password);
+        await _storage.setSignedOut(false);
+      }
       return _done(true, log);
+    } on SignInCancelledException {
+      // Also when cancelled straight through AuthService: quietly signed out.
+      if (!stopped()) state = SessionState(phase: SessionPhase.signedOut, log: log);
+      return false;
     } catch (e) {
+      if (stopped()) return false;
       log.add('ERROR: $e');
       state = SessionState(phase: SessionPhase.failed, error: friendlyError(e), log: log);
       return false;

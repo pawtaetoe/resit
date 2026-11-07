@@ -113,7 +113,7 @@ void main() {
         </form>
       </div>
       <div id="authOptions">
-        <form id="options" method="post" action="https://fs.example.edu/adfs/ls/idpinitiatedsignon.asmx">
+        <form id="options" method="post" action="https://fs.singaporetech.edu.sg/adfs/ls/idpinitiatedsignon.asmx">
           <input id="optionSelection" type="hidden" name="AuthMethod">
           <input id="userNameInputOptionsHolder" name="UserName" value="2100000@sit.singaporetech.edu.sg" type="hidden">
         </form>
@@ -143,6 +143,8 @@ void main() {
         <input type="submit" name="Continue" value="Continue">
       </form>''';
 
+    final adfsLogin = Uri.parse('https://fs.singaporetech.edu.sg/adfs/ls/?wa=wsignin1.0');
+
     Future<AuthService> service(
         {String? totp,
         bool acceptCode = true,
@@ -153,10 +155,11 @@ void main() {
       final mock = MockClient((request) async {
         final path = request.url.path;
         if (request.method == 'GET') {
-          return http.Response('<form><input type="password"></form>', 200, request: request);
+          // RBS bounces to the ADFS password page.
+          return http.Response('<form><input type="password"></form>', 200, request: http.Request('GET', adfsLogin));
         }
         final isCode = request.method == 'POST' && request.bodyFields.containsKey(field);
-        if (path == '/SRB001/SRB001Page' && !isCode) {
+        if (path == adfsLogin.path && request.bodyFields.containsKey('Password')) {
           return http.Response(withInterstitial ? interstitial : page, 200, request: request);
         }
         if (path == '/adfs/ls/next' && !isCode) return http.Response(page, 200, request: request);
@@ -278,8 +281,8 @@ void main() {
   group('Single sign-on to another app that asks for MFA again', () {
     const secret = 'JBSWY3DPEHPK3PXP';
     final config = TotpConfig.parse(secret);
-    final target = Uri.parse('https://in4sit.example.edu/psc/schedule');
-    final adfs = Uri.parse('https://fs.example.edu/adfs/ls/?wa=wsignin1.0');
+    final target = Uri.parse('https://in4sit.singaporetech.edu.sg/psc/schedule');
+    final adfs = Uri.parse('https://fs.singaporetech.edu.sg/adfs/ls/?wa=wsignin1.0');
 
     const mfaPage = '''
       <html><body>
@@ -292,7 +295,7 @@ void main() {
       </body></html>''';
     const relayPage = '''
       <html><body>
-        <form method="POST" action="https://in4sit.example.edu/psp/login">
+        <form method="POST" action="https://in4sit.singaporetech.edu.sg/psp/login">
           <input type="hidden" name="wa" value="wsignin1.0"/>
           <input type="hidden" name="wresult" value="token"/>
         </form>

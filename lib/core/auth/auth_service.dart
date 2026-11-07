@@ -35,15 +35,23 @@ class SessionExpiredException implements Exception {
       '${detail != null ? '\n\n$detail' : ''}';
 }
 
+/// [url] without its query string or fragment, for logs: sign-in URLs carry
+/// tokens and request ids in their query.
+String loggableUrl(Uri url) =>
+    url.hasAuthority ? '${url.scheme}://${url.host}${url.path}' : url.path;
+
 /// One-line summary of an HTML page for debugging: title, forms with their
-/// field names (no values), and the start of the visible text.
-String describeHtmlPage(String body) {
+/// field names (no values, actions without their query), and, unless
+/// [includeText] is false, the start of the visible text.
+String describeHtmlPage(String body, {bool includeText = true}) {
   final doc = parser.parse(body);
   final title = doc.querySelector('title')?.text.trim() ?? '';
   final forms = doc.querySelectorAll('form').map((f) {
     final names = f.querySelectorAll('input').map((i) => i.attributes['name']).whereType<String>();
-    return '[${f.attributes['action'] ?? ''} fields=${names.join(",")}]';
+    final action = Uri.tryParse(f.attributes['action'] ?? '');
+    return '[${action == null ? '?' : loggableUrl(action)} fields=${names.join(",")}]';
   }).join(' ');
+  if (!includeText) return 'title="$title" forms=$forms';
   final text = (doc.body?.text ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
   return 'title="$title" forms=$forms text="${text.substring(0, text.length.clamp(0, 300))}"';
 }
@@ -56,6 +64,49 @@ class MfaException implements Exception {
   String toString() => message;
 }
 
+/// The sign-in was stopped on purpose ([AuthService.cancelSignIn]); not an
+/// error to show the user.
+class SignInCancelledException implements Exception {
+  @override
+  String toString() => 'Sign-in cancelled.';
+}
+
+/// A sign-in step was about to send credentials or a sign-in token
+/// somewhere other than SIT's own servers over https, and was stopped.
+class UntrustedHostException implements Exception {
+  final String message;
+  UntrustedHostException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+/// Lets [AuthService.cancelSignIn] stop sign-ins that are in progress.
+class _CancelScope {
+  final _signal = Completer<void>();
+
+  bool get isCancelled => _signal.isCompleted;
+
+  void cancel() {
+    if (!_signal.isCompleted) _signal.complete();
+  }
+
+  void check() {
+    if (isCancelled) throw SignInCancelledException();
+  }
+
+  /// [future], or a [SignInCancelledException] as soon as this is cancelled.
+  Future<T> guard<T>(Future<T> future) async {
+    check();
+    final result = await Future.any<T>([
+      future,
+      _signal.future.then<T>((_) => throw SignInCancelledException()),
+    ]);
+    check();
+    return result;
+  }
+}
+
 class AuthService {
   final SessionClient client;
   final SecureStorage storage;
@@ -65,6 +116,44 @@ class AuthService {
   static const String base = "https://rbs.singaporetech.edu.sg";
   static const String callback = "$base/Account/LoginCallbak";
   static const String protected = "$base/SRB001/SRB001Page";
+
+  /// SIT's ADFS: the only host the saved student ID and password (and MFA
+  /// answers) are ever sent to.
+  static const String adfsHost = 'fs.singaporetech.edu.sg';
+
+  /// ADFS sign-in tokens (the wresult / SAMLResponse relay forms) are only
+  /// handed on to apps under this domain (RBS, in4SIT, xSiTe, ...). The
+  /// token is issued by ADFS for one SIT app and is worthless to the others,
+  /// so the whole SIT domain is allowed rather than a list of hosts that
+  /// would break whenever SIT adds or moves an app; what this stops is a
+  /// token going to a site outside SIT, or over plain http.
+  static const String sitDomain = 'singaporetech.edu.sg';
+
+  /// Whether [url] is SIT's ADFS over https.
+  static bool isAdfs(Uri url) => url.scheme == 'https' && url.host.toLowerCase() == adfsHost;
+
+  /// Whether [url] is an https address on SIT's own domain.
+  static bool isSitHost(Uri url) {
+    final host = url.host.toLowerCase();
+    return url.scheme == 'https' && (host == sitDomain || host.endsWith('.$sitDomain'));
+  }
+
+  static void _requireAdfs(Uri target, String what) {
+    if (!isAdfs(target)) {
+      throw UntrustedHostException('Stopped signing in: the sign-in page wanted your $what sent to '
+          '${target.scheme}://${target.host}, which is not SIT\'s sign-in server ($adfsHost).');
+    }
+  }
+
+  static void _requireSitHost(Uri target) {
+    if (!isSitHost(target)) {
+      throw UntrustedHostException('Stopped signing in: the sign-in page wanted to pass your sign-in on to '
+          '${target.scheme}://${target.host}, which is not an SIT (https://*.$sitDomain) address.');
+    }
+  }
+
+  /// How long signing out waits for ADFS to end the single sign-on session.
+  static const Duration signOutTimeout = Duration(seconds: 3);
 
   /// How often the session is pinged while the app is open. Hitting the
   /// protected page keeps the RBS cookie's sliding expiry alive and renews
@@ -80,7 +169,24 @@ class AuthService {
   bool _restored = false;
   bool _active = false;
   Timer? _keepAliveTimer;
+  bool _keepAlivePaused = false;
   Future<bool>? _resuming;
+  Future<bool>? _validating;
+  Future<String?>? _fetchingToken;
+
+  /// The cookie jar as last written to storage, so unchanged jars aren't
+  /// rewritten on every check.
+  String? _persistedJar;
+
+  _CancelScope _cancel = _CancelScope();
+
+  /// Stops every sign-in in progress (password + MFA, here or for another
+  /// app's single sign-on) at its next step: they end with a
+  /// [SignInCancelledException]. Sign-ins started afterwards are unaffected.
+  void cancelSignIn() {
+    _cancel.cancel();
+    _cancel = _CancelScope();
+  }
 
   /// Recent sign-in steps from every sign-in (Account, automatic, and other
   /// apps' single sign-on such as the timetable), shown in Account → Sign-in
@@ -135,13 +241,35 @@ class AuthService {
       onLog?.call(message);
     }
 
+    final cancel = _cancel;
     client.clearCookies();
     _cachedCsrfToken = null;
     _lastValidated = null;
 
+    try {
+      return await _login(username, password,
+          cancel: cancel, log: log, onMfaChallenge: onMfaChallenge, mfaTimeout: mfaTimeout);
+    } on SignInCancelledException {
+      log('Sign-in cancelled.');
+      client.clearCookies();
+      _cachedCsrfToken = null;
+      _lastValidated = null;
+      _setActive(false);
+      rethrow;
+    }
+  }
+
+  Future<bool> _login(
+    String username,
+    String password, {
+    required _CancelScope cancel,
+    required void Function(String message) log,
+    void Function(MfaChallenge challenge)? onMfaChallenge,
+    required Duration mfaTimeout,
+  }) async {
     // 1. GET the protected page. This redirects to ADFS.
     log('--- ADFS Login Started ---');
-    var response = await client.get(Uri.parse(protected));
+    var response = await cancel.guard(client.get(Uri.parse(protected)));
     log('Step 1 (GET protected page): Status ${response.statusCode}');
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch protected page.');
@@ -150,10 +278,12 @@ class AuthService {
     // The response URL is now the ADFS login form URL.
     var adfsUrl = response.request?.url;
     if (adfsUrl == null) throw Exception('No redirect to ADFS login page.');
+    // Never hand the password to wherever a redirect happened to land.
+    _requireAdfs(adfsUrl, 'student ID and password');
 
     // 2. POST credentials to ADFS. Kmsi asks ADFS for its persistent
     // "keep me signed in" SSO cookie, which lets us skip MFA on later logins.
-    var loginResponse = await client.post(
+    var loginResponse = await cancel.guard(client.post(
       adfsUrl,
       body: {
         "UserName": "$username@sit.singaporetech.edu.sg",
@@ -161,10 +291,10 @@ class AuthService {
         "AuthMethod": "FormAuthentication",
         "Kmsi": "true",
       },
-    );
+    ));
     log('Step 2 (POST credentials): Status ${loginResponse.statusCode}');
     if (loginResponse.statusCode != 200) {
-      throw Exception('Failed to post credentials to ADFS. Body: ${loginResponse.body.substring(0, 100)}...');
+      throw Exception('Failed to post credentials to ADFS (status ${loginResponse.statusCode}).');
     }
 
     var page = loginResponse.body;
@@ -181,6 +311,7 @@ class AuthService {
         mfaTimeout: mfaTimeout,
         log: log,
         onChallenge: onMfaChallenge,
+        cancel: cancel,
       ))
           .page;
       fields = _extractRelayFields(page);
@@ -192,9 +323,11 @@ class AuthService {
     }
 
     // 4. Replay the ADFS relay form to the callback
+    cancel.check();
     log('Step 4 (Replay form to callback): POSTing ${fields.keys.join(", ")}');
-    final callbackResponse = await client.post(Uri.parse(callback), body: fields);
-    log('Step 4 Result: Status ${callbackResponse.statusCode}, URL: ${callbackResponse.request?.url}');
+    final callbackResponse = await cancel.guard(client.post(Uri.parse(callback), body: fields));
+    final landed = callbackResponse.request?.url;
+    log('Step 4 Result: Status ${callbackResponse.statusCode}, URL: ${landed == null ? '?' : loggableUrl(landed)}');
 
     if (callbackResponse.statusCode != 200 && callbackResponse.statusCode != 302) {
       log('Warning: Unexpected status code from callback: ${callbackResponse.statusCode}');
@@ -202,6 +335,7 @@ class AuthService {
 
     final hasCookie = client.hasAuthCookie();
     log('Final Check: hasAuthCookie = $hasCookie');
+    cancel.check();
     if (hasCookie) {
       _lastValidated = DateTime.now();
       await _persistSession();
@@ -218,6 +352,7 @@ class AuthService {
     required Duration mfaTimeout,
     required void Function(String) log,
     void Function(MfaChallenge)? onChallenge,
+    required _CancelScope cancel,
   }) async {
     final deadline = clock().add(mfaTimeout);
     var url = startUrl;
@@ -230,6 +365,7 @@ class AuthService {
     String? lastCode;
 
     for (var step = 1;; step++) {
+      cancel.check();
       final doc = parser.parse(page);
       final code = _findCodeForm(doc);
       final form = code?.form ?? _pickForm(doc);
@@ -239,6 +375,8 @@ class AuthService {
 
       final action = form.attributes['action'];
       final target = (action == null || action.isEmpty) ? url : url.resolve(action);
+      // MFA forms carry the user name and the sign-in context: ADFS only.
+      _requireAdfs(target, 'sign-in verification');
       // With a code secret saved, pick the verification-code method when
       // the page offers a choice.
       final fields = _formFields(form, preferCode: totp != null);
@@ -261,7 +399,7 @@ class AuthService {
         // A code about to expire may be stale by the time it arrives, and a
         // code can't be used twice, so a retry waits for the next one.
         if (totp.secondsLeft(clock()) < 3 || totp.codeAt(clock()) == lastCode) {
-          await sleep(Duration(seconds: totp.secondsLeft(clock()) + 1));
+          await cancel.guard(sleep(Duration(seconds: totp.secondsLeft(clock()) + 1)));
         }
         onChallenge?.call(const MfaChallenge(
           message: 'Entering your verification code automatically…',
@@ -273,7 +411,7 @@ class AuthService {
         log('MFA: submitting verification code (attempt $codesSent) to ${target.path} '
             'as "$codeInput", other fields=${fields.keys.where((k) => k != codeInput).join(", ")}');
 
-        final resp = await client.post(target, body: fields);
+        final resp = await cancel.guard(client.post(target, body: fields));
         url = resp.request?.url ?? target;
         page = resp.body;
         if (_extractRelayForm(page, url) != null) {
@@ -326,13 +464,16 @@ class AuthService {
       // user has approved on their phone) or just re-serves the same page, so
       // keep polling until the deadline.
       if (step <= 2 || step % 10 == 0) {
-        log('MFA poll $step: POST ${target.path} fields=${fields.keys.join(", ")}'
-            '${number != null ? " number=$number" : ""}');
+        log('MFA poll $step: POST ${target.path} fields=${fields.keys.join(", ")}');
       }
-      final resp = await client.post(target, body: fields).timeout(
+      // ADFS may hold this request open until the phone approves, so it
+      // gets the rest of the MFA deadline rather than the client's default.
+      final resp = await cancel.guard(client
+          .withTimeout(remaining + const Duration(seconds: 5), () => client.post(target, body: fields))
+          .timeout(
             remaining,
             onTimeout: () => throw MfaException('Timed out waiting for Microsoft Authenticator approval.'),
-          );
+          ));
 
       url = resp.request?.url ?? target;
       page = resp.body;
@@ -352,7 +493,7 @@ class AuthService {
       if (error != null) throw MfaException(error);
 
       // Still waiting for approval on the phone: poll again shortly.
-      await sleep(const Duration(seconds: 2));
+      await cancel.guard(sleep(const Duration(seconds: 2)));
     }
   }
 
@@ -410,19 +551,11 @@ class AuthService {
     return null;
   }
 
-  /// Debug summary of an MFA page: field values (Context is only measured)
-  /// and the inline script that drives the page.
+  /// Debug summary of an MFA page: the names (never the values, which hold
+  /// the user name and sign-in context) of the fields to submit, the visible
+  /// boxes, and the sign-in method choices offered.
   String _describeMfaPage(dom.Document doc, Map<String, String> fields) {
-    final values = fields.entries
-        .map((e) => e.key == 'Context' ? 'Context(len=${e.value.length})' : '${e.key}="${e.value}"')
-        .join(' ');
-    final scripts = doc
-        .querySelectorAll('script')
-        .map((s) => s.text.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((t) => t.isNotEmpty && RegExp(r'complete|submit|__EVENTTARGET', caseSensitive: false).hasMatch(t))
-        .map((t) => t.substring(0, t.length.clamp(0, 700)))
-        .take(2)
-        .join(' || ');
+    final names = fields.keys.join(',');
     final inputs = doc
         .querySelectorAll('input')
         .where((i) => (i.attributes['type'] ?? 'text').toLowerCase() != 'hidden')
@@ -437,7 +570,7 @@ class AuthService {
         .where((t) => t.length < 80)
         .take(6)
         .join(' / ');
-    return 'fields: $values | inputs: $inputs | choices: $choices | script: $scripts';
+    return 'fields: $names | inputs: $inputs | choices: $choices';
   }
 
   // ---------------------------------------------------------------------------
@@ -460,6 +593,7 @@ class AuthService {
       if (saved != null && !client.hasCookies) {
         try {
           client.importCookies(saved);
+          _persistedJar = saved;
         } catch (e) {
           debugLog('Could not restore saved session: $e');
         }
@@ -479,12 +613,17 @@ class AuthService {
 
   /// GETs the protected page. Valid if it renders (with a CSRF token) rather
   /// than bouncing to ADFS; if ADFS answers with a ready relay form (SSO is
-  /// still alive) that is replayed once.
-  Future<bool> _validateSession() async {
+  /// still alive) that is replayed once. Concurrent checks (keep-alive,
+  /// resume, CSRF refresh) share one round trip.
+  Future<bool> _validateSession() {
+    return _validating ??= _doValidateSession().whenComplete(() => _validating = null);
+  }
+
+  Future<bool> _doValidateSession() async {
     for (var attempt = 0; attempt < 2; attempt++) {
       final response = await client.get(Uri.parse(protected));
       final url = response.request?.url;
-      debugLog('Session check: status ${response.statusCode}, URL: $url');
+      debugLog('Session check: status ${response.statusCode}, URL: ${url == null ? '?' : loggableUrl(url)}');
 
       if (response.statusCode >= 400) return false;
 
@@ -510,16 +649,40 @@ class AuthService {
     return false;
   }
 
+  /// Saves the cookie jar, unless it is exactly what was saved last time
+  /// (most checks change nothing, and each write re-encrypts the whole jar).
   Future<void> _persistSession() async {
     try {
-      await storage.saveSession(client.exportCookies());
+      final jar = client.exportCookies();
+      if (jar == _persistedJar) return;
+      await storage.saveSession(jar);
+      _persistedJar = jar;
     } catch (e) {
       debugLog('Could not persist session: $e');
     }
   }
 
-  void _setActive(bool value) {
-    if (value) {
+  /// Stops the keep-alive pings, e.g. while the app is in the background,
+  /// so it doesn't wake the radio every 10 minutes for nothing.
+  void pauseKeepAlive() {
+    _keepAlivePaused = true;
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
+  }
+
+  /// Restarts the keep-alive pings after [pauseKeepAlive] (if signed in).
+  /// The app checks the session itself when it comes back, so this doesn't
+  /// ping straight away.
+  void resumeKeepAlive() {
+    _keepAlivePaused = false;
+    _updateKeepAlive();
+  }
+
+  @visibleForTesting
+  bool get keepAliveRunning => _keepAliveTimer != null;
+
+  void _updateKeepAlive() {
+    if (_active && !_keepAlivePaused) {
       _keepAliveTimer ??= Timer.periodic(keepAliveInterval, (_) async {
         try {
           await resumeSession();
@@ -531,11 +694,14 @@ class AuthService {
       _keepAliveTimer?.cancel();
       _keepAliveTimer = null;
     }
+  }
 
-    if (_active != value) {
-      _active = value;
-      onSessionChanged?.call(value);
-    }
+  void _setActive(bool value) {
+    final changed = _active != value;
+    _active = value;
+    _updateKeepAlive();
+
+    if (changed) onSessionChanged?.call(value);
   }
 
   /// GET [url] on another ADFS-protected app (e.g. in4sit). If it bounces to
@@ -555,6 +721,7 @@ class AuthService {
     void Function(MfaChallenge challenge)? onMfaChallenge,
     Duration mfaTimeout = const Duration(minutes: 2),
   }) async {
+    final cancel = _cancel;
     var response = await client.get(url);
     var replayed = false;
     var signedIn = false;
@@ -567,7 +734,7 @@ class AuthService {
         debugLog('SSO: no relay form on ${landed.host}${landed.path} (status ${response.statusCode}). '
             'Cookies sent there: ${client.cookieNamesFor(landed)}');
         _record('SSO to ${url.host}: landed on ${landed.host}${landed.path} without a relay form.');
-        _record('SSO page: ${describeHtmlPage(response.body)}');
+        _record('SSO page: ${describeHtmlPage(response.body, includeText: false)}');
 
         signedIn = true;
         relay = await _signInAtAdfs(
@@ -580,12 +747,15 @@ class AuthService {
           },
           onMfaChallenge: onMfaChallenge,
           mfaTimeout: mfaTimeout,
+          cancel: cancel,
         );
       }
       if (relay == null) break;
 
+      // The relay form carries a sign-in token: SIT apps over https only.
+      _requireSitHost(relay.action);
       debugLog('SSO: replaying ADFS relay form to ${relay.action.host}${relay.action.path}');
-      await client.post(relay.action, body: relay.fields);
+      await cancel.guard(client.post(relay.action, body: relay.fields));
       replayed = true;
       response = await client.get(thenGet ?? url);
     }
@@ -604,6 +774,7 @@ class AuthService {
     required void Function(String) log,
     void Function(MfaChallenge)? onMfaChallenge,
     required Duration mfaTimeout,
+    required _CancelScope cancel,
   }) async {
     final doc = parser.parse(page);
     dom.Element? form;
@@ -616,7 +787,8 @@ class AuthService {
     if (form == null) {
       if (!_isAdfsMfaPage(doc)) return null;
       log('ADFS asks for multi-factor authentication for this app.');
-      final mfa = await _completeMfa(pageUrl, page, mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge);
+      final mfa = await _completeMfa(pageUrl, page,
+          mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge, cancel: cancel);
       return _extractRelayForm(mfa.page, mfa.url);
     }
 
@@ -625,9 +797,12 @@ class AuthService {
     final password = creds['password'];
     if (username == null || username.isEmpty || password == null || password.isEmpty) return null;
 
-    log('SSO unavailable, signing in to ADFS with saved credentials...');
     final action = form.attributes['action'];
     final target = (action == null || action.isEmpty) ? pageUrl : pageUrl.resolve(action);
+    // Only ever give the saved password to SIT's ADFS, whatever page a
+    // redirect landed on.
+    _requireAdfs(target, 'saved student ID and password');
+    log('SSO unavailable, signing in to ADFS with saved credentials...');
     final fields = _formFields(form)
       ..addAll({
         "UserName": "$username@sit.singaporetech.edu.sg",
@@ -636,7 +811,7 @@ class AuthService {
         "Kmsi": "true",
       });
 
-    final resp = await client.post(target, body: fields);
+    final resp = await cancel.guard(client.post(target, body: fields));
     log('ADFS sign-in: Status ${resp.statusCode}');
     var url = resp.request?.url ?? target;
     var body = resp.body;
@@ -644,7 +819,8 @@ class AuthService {
     var relay = _extractRelayForm(body, url);
     if (relay == null && _isMfaPage(body)) {
       log('ADFS requires multi-factor authentication.');
-      final mfa = await _completeMfa(url, body, mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge);
+      final mfa = await _completeMfa(url, body,
+          mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge, cancel: cancel);
       relay = _extractRelayForm(mfa.page, mfa.url);
     }
     if (relay == null) {
@@ -673,11 +849,26 @@ class AuthService {
     return null;
   }
 
+  /// Signs out: asks ADFS to end its single sign-on session (so the
+  /// "keep me signed in" cookie can't be used again even if it leaked),
+  /// then forgets the cookies here. The ADFS call is best effort and gives
+  /// up after [signOutTimeout], so signing out works offline too.
   Future<void> logout() async {
+    if (client.hasCookies) {
+      try {
+        final signOut = Uri.https(adfsHost, '/adfs/ls/', {'wa': 'wsignout1.0'});
+        await client
+            .withTimeout(signOutTimeout, () => client.get(signOut))
+            .timeout(signOutTimeout);
+      } catch (e) {
+        debugLog('ADFS sign-out failed (ignored): $e');
+      }
+    }
     client.clearCookies();
     _cachedCsrfToken = null;
     _lastValidated = null;
     await storage.clearSession();
+    _persistedJar = null;
     _setActive(false);
   }
 
@@ -687,10 +878,15 @@ class AuthService {
     _keepAliveTimer = null;
   }
 
-  Future<String?> getCsrfToken() async {
+  /// The RBS CSRF token, re-validating the session when the cached one is
+  /// stale. Callers asking at the same time share one check.
+  Future<String?> getCsrfToken() {
     final fresh = _lastValidated != null && DateTime.now().difference(_lastValidated!) < _tokenTtl;
-    if (_cachedCsrfToken != null && fresh) return _cachedCsrfToken;
+    if (_cachedCsrfToken != null && fresh) return Future.value(_cachedCsrfToken);
+    return _fetchingToken ??= _refreshCsrfToken().whenComplete(() => _fetchingToken = null);
+  }
 
+  Future<String?> _refreshCsrfToken() async {
     final valid = await _validateSession();
     if (valid) {
       await _persistSession();
