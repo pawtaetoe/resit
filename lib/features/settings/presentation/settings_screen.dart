@@ -6,6 +6,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
+import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/settings/presentation/totp_section.dart';
 
@@ -29,6 +30,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   /// Showing the form to change the saved student ID or password.
   bool _editing = false;
   bool _busy = false;
+
+  /// The technical sign-in log is shown after a failed sign-in, or on request.
+  bool _showLog = false;
 
   @override
   void initState() {
@@ -76,7 +80,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context,
       icon: Icons.logout,
       title: 'Sign out?',
-      message: "The app won't sign you back in automatically until you sign in here again.",
+      message: "The app won't sign you back in automatically until you sign in here again. "
+          'Your saved results and timetable are removed from this device.',
       choices: const [
         SheetChoice('keep', 'Sign out', icon: Icons.logout, primary: true),
         SheetChoice('forget', 'Sign out and forget my saved details', icon: Icons.delete_outline, danger: true),
@@ -87,11 +92,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final forget = choice == 'forget';
 
     await ref.read(sessionControllerProvider.notifier).signOut(forgetDetails: forget);
+    // Grades and the timetable don't stay on the device after any sign-out.
+    await ref.read(academicRecordServiceProvider).clear();
+    ref.invalidate(savedAcademicRecordProvider);
+    ref.invalidate(academicRecordProvider);
+    await ref.read(upcomingClassesServiceProvider).clear();
+    ref.invalidate(savedUpcomingClassesProvider);
+    ref.invalidate(upcomingClassesProvider);
     if (forget) {
-      await ref.read(academicRecordServiceProvider).clear();
-      ref.invalidate(savedAcademicRecordProvider);
-      await ref.read(upcomingClassesServiceProvider).clear();
-      ref.invalidate(savedUpcomingClassesProvider);
       ref.invalidate(totpConfigProvider);
       _usernameController.clear();
       _passwordController.clear();
@@ -112,7 +120,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final challenge = session.phase == SessionPhase.signingIn ? session.challenge : null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Account')),
       // While signing in for the first time (or changing the saved login) the
       // main action stays pinned above the tabs, within thumb reach.
       bottomNavigationBar: showForm
@@ -131,28 +138,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              padding: const EdgeInsets.fromLTRB(Space.page, Space.section, Space.page, 32),
               children: [
-                _StatusCard(signedIn: signedIn, phase: session.phase, username: _savedUsername),
-                const SizedBox(height: 24),
+                // Same header as Home and Services.
+                Text('Account', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: Space.page),
+                _statusBanner(signedIn, session.phase),
+                const SizedBox(height: Space.section),
                 if (challenge != null) ...[
                   MfaCard(challenge: challenge),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: Space.section),
                 ],
                 if (signedIn && !_editing) ...[
-                  Card(
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                      leading: const Icon(Icons.badge_outlined),
-                      title: Text(_savedUsername == null ? 'Saved login' : 'Student ID $_savedUsername'),
-                      subtitle: const Text('The app signs you back in automatically when your session expires.'),
-                      trailing: TextButton(
-                        onPressed: _busy ? null : () => setState(() => _editing = true),
-                        child: const Text('Change'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
                   OutlinedButton.icon(
                     onPressed: _busy ? null : _signOut,
                     icon: const Icon(Icons.logout),
@@ -165,8 +162,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   Text(
                     _editing
                         ? 'Enter your new student ID or password. The app signs in with it straight away.'
-                        : 'Use your SIT student ID and password. Approve this first sign-in on your phone; '
-                            'after that the app signs you back in automatically whenever the session expires.',
+                        : 'Use your SIT student ID and password. The first time, approve the sign-in in '
+                            'Microsoft Authenticator within 2 minutes; after that the app signs you back in '
+                            'automatically whenever the session expires.',
                     style: theme.textTheme.bodyMedium?.copyWith(color: muted),
                   ),
                   const SizedBox(height: 16),
@@ -186,12 +184,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                 ],
                 if (session.phase == SessionPhase.failed && session.error != null) ...[
-                  const SizedBox(height: 16),
-                  _ErrorBox(message: session.error!),
+                  const SizedBox(height: Space.page),
+                  StatusBanner(
+                    tone: Tone.danger,
+                    icon: Icons.error_outline,
+                    title: "Couldn't sign you in",
+                    message: session.error!,
+                  ),
                 ],
-                const SizedBox(height: 24),
-                const TotpSection(),
-                const SizedBox(height: 16),
+                // Automatic codes only make sense once there's a login to use them with.
+                if (signedIn || _savedUsername != null) ...[
+                  const SizedBox(height: Space.section),
+                  const TotpSection(),
+                ],
+                const SizedBox(height: Space.page),
                 Row(
                   children: [
                     Icon(Icons.shield_outlined, size: 18, color: muted),
@@ -206,14 +212,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 // Every sign-in's steps (including the timetable's), for
                 // troubleshooting.
+                // Shown after a failed sign-in, or behind "Having trouble?".
                 ValueListenableBuilder<List<String>>(
                   valueListenable: ref.watch(authServiceProvider).signInLog,
-                  builder: (context, log, _) => log.isEmpty
-                      ? const SizedBox.shrink()
-                      : Padding(
-                          padding: const EdgeInsets.only(top: 16),
-                          child: _LogPanel(log: log.join('\n')),
+                  builder: (context, log, _) {
+                    if (log.isEmpty) return const SizedBox.shrink();
+                    if (!_showLog && session.phase != SessionPhase.failed) {
+                      return Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: () => setState(() => _showLog = true),
+                          child: const Text('Having trouble signing in?'),
                         ),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(top: Space.page),
+                      child: _LogPanel(log: log.join('\n')),
+                    );
+                  },
                 ),
               ],
             ),
@@ -221,6 +238,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  /// Whether you're signed in, and as whom. When signed in, "Change" edits
+  /// the saved login.
+  Widget _statusBanner(bool signedIn, SessionPhase phase) {
+    if (signedIn) {
+      return StatusBanner(
+        tone: Tone.success,
+        icon: Icons.verified_user_outlined,
+        title: _savedUsername != null ? 'Signed in as $_savedUsername' : 'Signed in',
+        message: 'The app signs you back in automatically when your session expires.',
+        action: _editing
+            ? null
+            : TextButton(onPressed: _busy ? null : () => setState(() => _editing = true), child: const Text('Change')),
+      );
+    }
+    final (Tone tone, IconData icon, String title, String message) = switch (phase) {
+      SessionPhase.checking => (Tone.info, Icons.sync, 'Checking your session…', 'This only takes a moment.'),
+      SessionPhase.signingIn => (Tone.info, Icons.sync, 'Signing you in…', 'Using your saved login.'),
+      SessionPhase.failed => (Tone.danger, Icons.error_outline, "Couldn't sign you in", 'See the message below.'),
+      _ => (Tone.info, Icons.person_outline, 'Not signed in', 'Sign in below to use your timetable, results and bookings.'),
+    };
+    return StatusBanner(tone: tone, icon: icon, title: title, message: message);
   }
 
   Widget _buildForm() {
@@ -269,87 +309,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 }
 
-class _StatusCard extends StatelessWidget {
-  final bool signedIn;
-  final SessionPhase phase;
-  final String? username;
-
-  const _StatusCard({required this.signedIn, required this.phase, this.username});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final (Tone tone, IconData icon, String title, String detail) = signedIn
-        ? (
-            Tone.success,
-            Icons.verified_user_outlined,
-            'Signed in',
-            username != null ? 'Student ID $username' : 'Session active'
-          )
-        : switch (phase) {
-            SessionPhase.checking => (Tone.info, Icons.sync, 'Checking your session…', 'This only takes a moment'),
-            SessionPhase.signingIn => (Tone.info, Icons.sync, 'Signing you back in…', 'Using your saved login'),
-            SessionPhase.failed => (Tone.danger, Icons.error_outline, "Couldn't sign you in", 'See the message below'),
-            _ => (
-                Tone.warning,
-                Icons.person_off_outlined,
-                'Not signed in',
-                'Sign in below to use bookings and timetable'
-              ),
-          };
-    final (bg, fg) = tone.colors(theme.colorScheme);
-
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: fg.withValues(alpha: 0.12),
-              child: Icon(icon, color: fg),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: theme.textTheme.titleMedium?.copyWith(color: fg)),
-                  Text(detail, style: TextStyle(color: fg)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorBox extends StatelessWidget {
-  final String message;
-  const _ErrorBox({required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    final (bg, fg) = Tone.danger.colors(Theme.of(context).colorScheme);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.error_outline, color: fg),
-          const SizedBox(width: 10),
-          Expanded(child: Text(message, style: TextStyle(color: fg))),
-        ],
-      ),
-    );
-  }
-}
-
 /// Technical sign-in log, collapsed by default: useful for troubleshooting,
 /// noise for everyone else.
 class _LogPanel extends StatelessWidget {
@@ -364,8 +323,7 @@ class _LogPanel extends StatelessWidget {
       child: ExpansionTile(
         leading: const Icon(Icons.receipt_long_outlined),
         title: const Text('Sign-in details'),
-        subtitle: const Text('For troubleshooting'),
-        shape: const Border(),
+        subtitle: const Text('Copy these if you need help with signing in'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           Container(
@@ -375,7 +333,8 @@ class _LogPanel extends StatelessWidget {
               color: scheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: SelectableText(log, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+            child: SelectableText(log,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
           ),
           Align(
             alignment: Alignment.centerRight,

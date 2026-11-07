@@ -28,6 +28,8 @@ class ThumbBar extends StatelessWidget {
 
     return Material(
       color: scheme.surfaceContainer,
+      // A hairline on top, so a bar above the tab bar (Account) doesn't merge with it.
+      shape: Border(top: BorderSide(color: scheme.outlineVariant)),
       child: SafeArea(
         top: false,
         // On wide screens the controls stop at 640 px and centre, rather than

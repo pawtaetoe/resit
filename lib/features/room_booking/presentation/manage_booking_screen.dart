@@ -6,6 +6,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
+import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
@@ -184,7 +185,7 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       ),
       body: Column(
         children: [
-          SizedBox(height: 3, child: _isLoading && _bookings != null ? const LinearProgressIndicator() : null),
+          RefreshStrip(active: _isLoading && _bookings != null),
           Expanded(child: _buildContent()),
         ],
       ),
@@ -193,7 +194,11 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
 
   Widget _buildContent() {
     if (_isLoading && _bookings == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const MessageView(
+        icon: Icons.event_note_outlined,
+        title: 'Getting your bookings…',
+        action: SizedBox(width: 160, child: LinearProgressIndicator()),
+      );
     }
 
     if (_error != null) {
@@ -247,9 +252,9 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
       onRefresh: _refresh,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
         itemCount: bookings.length + (showQuota ? 1 : 0),
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        separatorBuilder: (_, __) => const SizedBox(height: Space.card),
         itemBuilder: (context, index) {
           if (showQuota && index == 0) return QuotaCard(day: DateTime.now());
           final i = index - (showQuota ? 1 : 0);

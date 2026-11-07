@@ -7,6 +7,8 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/charts.dart';
+import 'package:resit/core/widgets/panels.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
@@ -51,9 +53,10 @@ class _AcademicProgressScreenState extends ConsumerState<AcademicProgressScreen>
           children: [
             Expanded(
               child: FilledButton.tonalIcon(
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExamResultsScreen())),
+                onPressed: () => Navigator.push(
+                    context, MaterialPageRoute(builder: (_) => const ExamResultsScreen(fromProgress: true))),
                 icon: const Icon(Icons.grading_outlined),
-                label: const Text('Result slips'),
+                label: const Text('Exam results', overflow: TextOverflow.ellipsis),
               ),
             ),
             const SizedBox(width: 8),
@@ -78,47 +81,59 @@ class _AcademicProgressScreenState extends ConsumerState<AcademicProgressScreen>
                       message: 'Reading each term from in4SIT. This can take a little while the first time.',
                       action: SizedBox(width: 160, child: LinearProgressIndicator()),
                     )
-                  : const MessageView(
+                  : MessageView(
                       icon: Icons.insights_outlined,
                       title: 'No results yet',
                       message: 'Sign in to see your progress.',
+                      action: ref.watch(authStateProvider)
+                          ? null
+                          : FilledButton.icon(
+                              onPressed: () => goToAccount(context, ref),
+                              icon: const Icon(Icons.login),
+                              label: const Text('Go to sign in'),
+                            ),
                     ))
-          : RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                children: [
-                  if (_refreshing) const LinearProgressIndicator(),
-                  _Totals(record: record),
-                  const SizedBox(height: 16),
-                  if (record.terms.isEmpty)
-                    const MessageView(
-                      icon: Icons.insights_outlined,
-                      title: 'Charts are on their way',
-                      message: 'Pull down to read each term from in4SIT.',
-                    )
-                  else ...[
-                    _GpaCard(terms: record.terms),
-                    const SizedBox(height: 12),
-                    _CreditsCard(terms: record.terms),
-                    if (record.gradeCounts.isNotEmpty) ...[
+          : Column(children: [
+              RefreshStrip(active: _refreshing),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
+                    children: [
+                      _Totals(record: record),
+                      const SizedBox(height: Space.page),
+                      if (record.terms.isEmpty)
+                        const MessageView(
+                          compact: true,
+                          icon: Icons.insights_outlined,
+                          title: 'Charts are on their way',
+                          message: 'Pull down to read each term from in4SIT.',
+                        )
+                      else ...[
+                        _GpaCard(terms: record.terms),
+                        const SizedBox(height: 12),
+                        _CreditsCard(terms: record.terms),
+                        if (record.gradeCounts.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          _GradesCard(counts: record.gradeCounts),
+                        ],
+                      ],
                       const SizedBox(height: 12),
-                      _GradesCard(counts: record.gradeCounts),
+                      Text(
+                        'From your in4SIT result slips, updated ${DateFormat('d MMM, HH:mm').format(record.fetchedAt)}. '
+                        'Pull down to update.',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      ),
                     ],
-                  ],
-                  const SizedBox(height: 12),
-                  Text(
-                    'From your in4SIT result slips, updated ${DateFormat('d MMM, HH:mm').format(record.fetchedAt)}. '
-                    'Pull down to update.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
-                ],
+                ),
               ),
-            ),
+            ]),
     );
   }
 }
@@ -131,39 +146,28 @@ class _Totals extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
     final gradesVisible = ref.watch(gradesVisibleProvider);
-    // [hidden] is read out instead of the value while it's hidden.
-    Widget stat(String value, String label, {String? hidden}) => Expanded(
-          child: Semantics(
-            label: hidden,
-            excludeSemantics: hidden != null,
-            child: Card(
-              color: theme.colorScheme.primaryContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(value,
-                        style: theme.textTheme.headlineSmall
-                            ?.copyWith(color: theme.colorScheme.onPrimaryContainer, fontWeight: FontWeight.bold)),
-                    Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          stat(_num(record.creditsEarned),
-              'credits earned${record.creditsInProgress > 0 ? ' · ${_num(record.creditsInProgress)} in progress' : ''}'),
-          const SizedBox(width: 8),
-          stat(gradesVisible ? record.cumulativeGpa ?? '–' : hiddenValue, 'cumulative GPA',
-              hidden: gradesVisible ? null : 'Cumulative GPA, hidden'),
+          Expanded(
+            child: StatTile(
+              tinted: true,
+              value: _num(record.creditsEarned),
+              caption: 'credits earned'
+                  '${record.creditsInProgress > 0 ? ' · ${_num(record.creditsInProgress)} in progress' : ''}',
+            ),
+          ),
+          const SizedBox(width: Space.card),
+          Expanded(
+            child: StatTile(
+              tinted: true,
+              value: gradesVisible ? record.cumulativeGpa ?? '–' : hiddenValue,
+              caption: 'cumulative GPA',
+              semanticsLabel: gradesVisible ? null : 'Cumulative GPA, hidden',
+            ),
+          ),
         ],
       ),
     );

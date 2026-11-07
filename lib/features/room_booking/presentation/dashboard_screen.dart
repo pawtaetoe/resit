@@ -6,8 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
+import 'package:resit/core/widgets/panels.dart';
+import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
@@ -95,6 +98,16 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   List<Room> _failed = [];
   Object? _firstFailure;
   StreamSubscription<RoomCheck>? _searchSub;
+
+  /// Room results arrive many per second; the screen redraws for them at
+  /// most every 80 ms instead of once per room.
+  Timer? _redraw;
+  void _scheduleRedraw() {
+    _redraw ??= Timer(const Duration(milliseconds: 80), () {
+      _redraw = null;
+      if (mounted) setState(() {});
+    });
+  }
   String? _error;
   bool _errorIsSession = false;
 
@@ -271,6 +284,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   @override
   void dispose() {
     _cancelSearch();
+    _redraw?.cancel();
     super.dispose();
   }
 
@@ -316,16 +330,15 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       _searchSub = service.checkEachRoom(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin)).listen(
         (check) {
           if (!mounted) return;
-          setState(() {
-            _checked++;
-            if (check.error != null) {
-              _failed.add(check.room);
-              _firstFailure ??= check.error;
-            } else if (check.result != null) {
-              final picks = slotsInRange(check.result!.slots, start, end);
-              if (picks.isNotEmpty) _rooms?.add(RoomWithSlots(check.room, picks));
-            }
-          });
+          _checked++;
+          if (check.error != null) {
+            _failed.add(check.room);
+            _firstFailure ??= check.error;
+          } else if (check.result != null) {
+            final picks = slotsInRange(check.result!.slots, start, end);
+            if (picks.isNotEmpty) _rooms?.add(RoomWithSlots(check.room, picks));
+          }
+          _scheduleRedraw();
         },
         onError: (Object e) {
           if (!done.isCompleted) done.completeError(e);
@@ -390,9 +403,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       'Booked ${room.room.rsrcName} for $summary.',
       action: SnackBarAction(
         label: 'My bookings',
-        onPressed: () => Navigator.push(
-          context,
+        // Back to the tabs first, so there's never a second My bookings
+        // underneath (e.g. when Book a room was opened from My bookings).
+        onPressed: () => Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const ManageBookingScreen()),
+          (route) => route.isFirst,
         ),
       ),
     );
@@ -404,7 +419,6 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final quota = weeklyQuotaFor(ref, _date);
     // Other room types (e.g. lecture rooms) have no weekly allowance, so the
     // hours left only limit the length when just DR/MR are being searched.
@@ -414,7 +428,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     return Scaffold(
       appBar: thumbAppBar('Book a room'),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+        padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, 32),
         children: [
           _label(context, 'Day'),
           _buildDayPicker(),
@@ -426,11 +440,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           _buildDurationPicker(maxLeft),
           if (overQuota) ...[
             const SizedBox(height: 8),
-            Text(
-              maxLeft == 0
-                  ? "You've used all your booking hours for this week. Pick a day in another week."
-                  : 'Only ${formatHours(maxLeft)} left this week. Pick a shorter time.',
-              style: TextStyle(color: theme.colorScheme.error),
+            StatusBanner(
+              tone: Tone.warning,
+              icon: Icons.hourglass_bottom,
+              title: maxLeft == 0 ? 'No booking hours left this week' : 'Only ${formatHours(maxLeft)} left this week',
+              message: maxLeft == 0 ? 'Pick a day in another week.' : 'Pick a shorter time.',
             ),
           ],
           const SizedBox(height: 20),
@@ -452,7 +466,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
             ? FilledButton.tonalIcon(
                 onPressed: () => _cancelSearch(stoppedByUser: true),
                 icon: const Icon(Icons.stop_circle_outlined),
-                label: Text(_total == 0 ? 'Stop' : 'Stop · checked $_checked/$_total'),
+                label: Text(_total == 0 ? 'Stop' : 'Stop · checked $_checked/$_total', overflow: TextOverflow.ellipsis),
               )
             : BusyButton(
                 onPressed:
@@ -465,13 +479,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     );
   }
 
-  Widget _label(BuildContext context, String text) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(text, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-    );
-  }
+  Widget _label(BuildContext context, String text) => SectionLabel(text, muted: true);
 
   Widget _buildDayPicker() {
     final today = _today();
@@ -503,7 +511,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
             label: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(top, style: TextStyle(fontSize: 12, color: selected ? null : scheme.onSurfaceVariant)),
+                Text(top, style: Theme.of(context).textTheme.labelMedium?.copyWith(color: selected ? null : scheme.onSurfaceVariant)),
                 Text(DateFormat('d MMM').format(d), style: const TextStyle(fontWeight: FontWeight.w600)),
               ],
             ),
@@ -518,14 +526,53 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     if (options.isEmpty) {
       return const Text('No more slots today. Pick another day.');
     }
-    return DropdownButtonFormField<int>(
-      initialValue: options.contains(_startMin) ? _startMin : options.first,
-      key: ValueKey(_date), // rebuild with fresh options when the day changes
-      decoration: const InputDecoration(prefixIcon: Icon(Icons.access_time)),
-      menuMaxHeight: 320,
-      items: [for (final m in options) DropdownMenuItem(value: m, child: Text(_hhmm(m)))],
-      onChanged: _searching ? null : (m) => _changeSearch(() => _startMin = m!),
+    final current = options.contains(_startMin) ? _startMin : options.first;
+    // A field that opens a sheet of times at the bottom of the screen, within
+    // thumb reach, instead of a long menu near the top.
+    return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(alignment: Alignment.centerLeft),
+      onPressed: _searching ? null : () => _pickStart(options, current),
+      icon: const Icon(Icons.access_time),
+      label: Row(
+        children: [
+          Expanded(child: Text(_hhmm(current), style: Theme.of(context).textTheme.titleMedium)),
+          const Icon(Icons.expand_more),
+        ],
+      ),
     );
+  }
+
+  Future<void> _pickStart(List<int> options, int current) async {
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.page),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Start time', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: Space.page),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final m in options)
+                    ChoiceChip(
+                      label: Text(_hhmm(m)),
+                      selected: m == current,
+                      onSelected: (_) => Navigator.pop(context, m),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked != null && picked != current) _changeSearch(() => _startMin = picked);
   }
 
   /// Collapsed: "Room types" with the picked types on one line. Tap to show
@@ -677,6 +724,8 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     if (_error != null) {
       return [
         MessageView(
+          compact: true,
+          tone: Tone.danger,
           icon: _errorIsSession ? Icons.lock_clock : Icons.cloud_off,
           title: _errorIsSession ? "Couldn't sign you in" : "Couldn't load rooms",
           message: _error,
@@ -712,19 +761,11 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     // Rooms that couldn't be checked even after a retry.
     final failedNote = !_searching && _failed.isNotEmpty
         ? <Widget>[
-            Card(
-              color: theme.colorScheme.errorContainer,
-              child: ListTile(
-                leading: Icon(Icons.warning_amber_rounded, color: theme.colorScheme.onErrorContainer),
-                title: Text(
-                  "${_failed.length} ${_failed.length == 1 ? 'room' : 'rooms'} couldn't be checked",
-                  style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                ),
-                trailing: TextButton(
-                  onPressed: () => _search(only: List.of(_failed)),
-                  child: const Text('Check again'),
-                ),
-              ),
+            StatusBanner(
+              tone: Tone.warning,
+              icon: Icons.warning_amber_rounded,
+              title: "${_failed.length} ${_failed.length == 1 ? 'room' : 'rooms'} couldn't be checked",
+              action: TextButton(onPressed: () => _search(only: List.of(_failed)), child: const Text('Check again')),
             ),
             const SizedBox(height: 12),
           ]
@@ -735,6 +776,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       if (_stopped) {
         return [
           MessageView(
+            compact: true,
             icon: Icons.stop_circle_outlined,
             title: 'Search stopped',
             message: 'Checked $_checked of $_total rooms, none free so far.',
@@ -745,6 +787,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       }
       return [
         const MessageView(
+          compact: true,
           icon: Icons.meeting_room_outlined,
           title: 'No rooms free for this slot',
           message: 'Try a shorter time, a different start time or another day.',

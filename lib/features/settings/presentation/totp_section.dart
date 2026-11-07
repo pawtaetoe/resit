@@ -122,7 +122,13 @@ class _LiveCodeState extends State<LiveCode> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+    // Redraws only while it can be seen: not on another tab (TickerMode off)
+    // or with the app in the background.
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+      setState(() {});
+    });
   }
 
   @override
@@ -251,7 +257,7 @@ class _TotpSetupSheetState extends ConsumerState<_TotpSetupSheet> {
               CircleAvatar(
                 radius: 11,
                 backgroundColor: scheme.primaryContainer,
-                child: Text('$n', style: TextStyle(fontSize: 12, color: scheme.onPrimaryContainer)),
+                child: Text('$n', style: Theme.of(context).textTheme.labelMedium?.copyWith(color: scheme.onPrimaryContainer)),
               ),
               const SizedBox(width: 10),
               Expanded(child: Text(text)),

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -104,7 +105,7 @@ class _LineChartState extends State<LineChart> {
               children: [
                 CustomPaint(
                   size: size,
-                  painter: _LinePainter(widget, layout, colors, text, selected),
+                  painter: _LinePainter(widget, layout, colors, text, selected, _chartTextScale(context)),
                 ),
                 if (selected != null)
                   Positioned(
@@ -158,12 +159,14 @@ class _LinePainter extends CustomPainter {
   final ChartColors c;
   final TextTheme text;
   final int? selected;
+  final TextScaler scale;
 
-  _LinePainter(this.chart, this.l, this.c, this.text, this.selected);
+  _LinePainter(this.chart, this.l, this.c, this.text, this.selected, this.scale);
 
   void _text(Canvas canvas, String s, Offset at, TextStyle? style,
       {TextAlign align = TextAlign.left, bool middle = true}) {
-    final tp = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr)..layout();
+    final tp = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr, textScaler: scale)
+      ..layout();
     final dx = switch (align) {
       TextAlign.right => at.dx - tp.width,
       TextAlign.center => at.dx - tp.width / 2,
@@ -177,7 +180,7 @@ class _LinePainter extends CustomPainter {
     final grid = Paint()
       ..color = c.grid
       ..strokeWidth = 1;
-    final small = text.bodySmall?.copyWith(color: c.mutedText, fontSize: 11);
+    final small = text.labelSmall?.copyWith(color: c.mutedText);
 
     // Hairline gridlines and y-axis ticks.
     for (final t in chart.yTicks) {
@@ -249,7 +252,14 @@ class _LinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_LinePainter old) => old.selected != selected || old.chart != chart || old.c.surface != c.surface;
+  bool shouldRepaint(_LinePainter old) =>
+      old.selected != selected ||
+      old.c.surface != c.surface ||
+      old.scale != scale ||
+      !listEquals(old.chart.xLabels, chart.xLabels) ||
+      old.chart.series.length != chart.series.length ||
+      [for (var i = 0; i < chart.series.length; i++) !listEquals(old.chart.series[i].values, chart.series[i].values)]
+          .any((changed) => changed);
 }
 
 class _Tooltip extends StatelessWidget {
@@ -324,7 +334,8 @@ class ColumnChart extends StatelessWidget {
       child: SizedBox(
         height: height,
         width: double.infinity,
-        child: CustomPaint(painter: _ColumnPainter(this, colors, Theme.of(context).textTheme)),
+        child: CustomPaint(
+            painter: _ColumnPainter(this, colors, Theme.of(context).textTheme, _chartTextScale(context))),
       ),
     );
   }
@@ -334,8 +345,9 @@ class _ColumnPainter extends CustomPainter {
   final ColumnChart chart;
   final ChartColors c;
   final TextTheme text;
+  final TextScaler scale;
 
-  _ColumnPainter(this.chart, this.c, this.text);
+  _ColumnPainter(this.chart, this.c, this.text, this.scale);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -345,10 +357,10 @@ class _ColumnPainter extends CustomPainter {
     final maxV = chart.values.fold<double>(0, math.max);
     final plotH = size.height - top - bottom;
     final band = size.width / n;
-    final barW = math.min(24.0, band * 0.6);
+    final barW = math.min(40.0, band * 0.6);
     final baseY = size.height - bottom;
-    final small = text.bodySmall?.copyWith(color: c.mutedText, fontSize: 11);
-    final value = text.bodySmall?.copyWith(color: c.text, fontWeight: FontWeight.w600, fontSize: 11);
+    final small = text.labelSmall?.copyWith(color: c.mutedText);
+    final value = text.labelSmall?.copyWith(color: c.text, fontWeight: FontWeight.w600);
 
     // Baseline hairline.
     canvas.drawLine(
@@ -376,12 +388,17 @@ class _ColumnPainter extends CustomPainter {
   }
 
   void _paint(Canvas canvas, String s, Offset at, TextStyle? style, {required bool above}) {
-    final tp = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr)..layout();
+    final tp = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr, textScaler: scale)
+      ..layout();
     tp.paint(canvas, Offset(at.dx - tp.width / 2, above ? at.dy - tp.height : at.dy));
   }
 
   @override
-  bool shouldRepaint(_ColumnPainter old) => old.chart != chart || old.c.series1 != c.series1;
+  bool shouldRepaint(_ColumnPainter old) =>
+      old.c.series1 != c.series1 ||
+      old.scale != scale ||
+      !listEquals(old.chart.values, chart.values) ||
+      !listEquals(old.chart.labels, chart.labels);
 }
 
 /// "Show as table": the chart's numbers as rows, so nothing depends on
@@ -398,8 +415,6 @@ class ChartTable extends StatelessWidget {
     return ExpansionTile(
       title: Text('Show as table', style: theme.textTheme.bodyMedium),
       tilePadding: EdgeInsets.zero,
-      shape: const Border(),
-      collapsedShape: const Border(),
       children: [
         Table(
           columnWidths: const {0: FlexColumnWidth(2)},
@@ -415,3 +430,8 @@ class ChartTable extends StatelessWidget {
     );
   }
 }
+
+/// Chart labels follow the user's text size, up to 1.3×: beyond that they'd
+/// overrun the chart's margins, and "Show as table" has the same numbers at
+/// full size.
+TextScaler _chartTextScale(BuildContext context) => MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3);
