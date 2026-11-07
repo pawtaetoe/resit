@@ -12,14 +12,32 @@ class BookingService {
 
   List<Room>? _cachedRooms;
 
-  BookingService(this.client, this.auth);
+  /// Bookings by status are reused this long, so screens opened together
+  /// (My bookings, the quota card, Home's next booking) share one request.
+  static const bookingsTtl = Duration(seconds: 30);
+
+  final DateTime Function() _now;
+  final Map<String, ({DateTime at, Future<List<Booking>> bookings})> _bookings = {};
+  Future<String?>? _csrfInFlight;
+
+  BookingService(this.client, this.auth, {DateTime Function()? now}) : _now = now ?? DateTime.now;
+
+  /// The RBS form token. Requests that start together share one look-up
+  /// (the auth service keeps the token itself between look-ups).
+  Future<String?> _csrfToken() {
+    return _csrfInFlight ??= auth.getCsrfToken().whenComplete(() => _csrfInFlight = null);
+  }
+
+  /// Forgets the bookings kept by [getBookings], so the next call asks RBS.
+  /// Booking and cancelling here do this themselves.
+  void invalidateBookings() => _bookings.clear();
 
   Future<List<Room>> getRooms({String search = ""}) async {
     if (search.isEmpty && _cachedRooms != null) {
       return _cachedRooms!;
     }
 
-    final csrfToken = await auth.getCsrfToken();
+    final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
     final data = {
@@ -72,7 +90,7 @@ class BookingService {
   }
 
   Future<List<RoomWithSlots>> checkAvailability(List<Room> rooms, String date, String startTime, String endTime) async {
-    final csrfToken = await auth.getCsrfToken();
+    final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
     final resourceList = rooms
@@ -165,7 +183,7 @@ class BookingService {
       try {
         // Validate the session once up front, so the parallel requests don't
         // each re-check it at the same moment.
-        final token = await auth.getCsrfToken();
+        final token = await _csrfToken();
         if (token == null) throw Exception("Could not get CSRF token.");
         await Future.wait([for (var i = 0; i < parallel && i < rooms.length; i++) worker()]);
       } catch (e, st) {
@@ -231,7 +249,16 @@ class BookingService {
   }
 
   Future<void> initiateAndConfirmBooking(Room room, List<RoomSlot> slots, String date) async {
-    final csrfToken = await auth.getCsrfToken();
+    try {
+      await _book(room, slots, date);
+    } finally {
+      // Booked, or maybe partly: either way the kept list is out of date.
+      invalidateBookings();
+    }
+  }
+
+  Future<void> _book(Room room, List<RoomSlot> slots, String date) async {
+    final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
     // Initiate
@@ -314,8 +341,24 @@ class BookingService {
     }
   }
 
-  Future<List<Booking>> getBookings({String bookingStatus = 'current'}) async {
-    final csrfToken = await auth.getCsrfToken();
+  /// The student's bookings with [bookingStatus] ("current" or "history").
+  /// Reused for [bookingsTtl], and calls made while one is under way share
+  /// it; [force] asks RBS again.
+  Future<List<Booking>> getBookings({String bookingStatus = 'current', bool force = false}) {
+    final kept = _bookings[bookingStatus];
+    if (!force && kept != null && _now().difference(kept.at) < bookingsTtl) return kept.bookings.then(List.of);
+    final future = _fetchBookings(bookingStatus);
+    final entry = (at: _now(), bookings: future);
+    _bookings[bookingStatus] = entry;
+    // A failed request isn't kept.
+    future.then((_) {}, onError: (_) {
+      if (identical(_bookings[bookingStatus], entry)) _bookings.remove(bookingStatus);
+    });
+    return future.then(List.of);
+  }
+
+  Future<List<Booking>> _fetchBookings(String bookingStatus) async {
+    final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
     final data = {
@@ -364,7 +407,15 @@ class BookingService {
   }
 
   Future<void> cancelBooking(String cancelId) async {
-    final csrfToken = await auth.getCsrfToken();
+    try {
+      await _cancel(cancelId);
+    } finally {
+      invalidateBookings();
+    }
+  }
+
+  Future<void> _cancel(String cancelId) async {
+    final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
     final data = {
