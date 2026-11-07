@@ -1,5 +1,3 @@
-import 'dart:ui' show ImageFilter;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
@@ -28,29 +26,22 @@ class GradeVisibilityButton extends ConsumerWidget {
     final tooltip = visible ? 'Hide grades' : 'Show grades';
 
     if (inBar) {
-      return SizedBox.square(
-        dimension: ThumbBar.heightOf(context),
-        child: IconButton.outlined(
-          tooltip: tooltip,
-          isSelected: visible,
-          style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-          onPressed: toggle,
-          icon: icon,
-        ),
+      return ThumbIconButton(
+        tooltip: tooltip,
+        icon: Icons.visibility_off_outlined,
+        selectedIcon: Icons.visibility_outlined,
+        selected: visible,
+        onPressed: toggle,
       );
     }
-    return IconButton(
-      tooltip: tooltip,
-      visualDensity: VisualDensity.compact,
-      onPressed: toggle,
-      icon: icon,
-    );
+    // Full 48 px target.
+    return IconButton(tooltip: tooltip, onPressed: toggle, icon: icon);
   }
 }
 
-/// Covers a block of grades (e.g. a chart) while grades are hidden: blurred,
-/// with a closed eye and "Tap to show". Screen readers hear only that it's
-/// hidden, not the numbers underneath.
+/// Covers a block of grades (e.g. a chart) while grades are hidden: the
+/// block keeps its size but isn't drawn, with a closed eye and "tap to show"
+/// in its place. Screen readers hear only that it's hidden.
 class GradeCurtain extends ConsumerWidget {
   final Widget child;
   const GradeCurtain({super.key, required this.child});
@@ -59,6 +50,7 @@ class GradeCurtain extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     if (ref.watch(gradesVisibleProvider)) return child;
     final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
     return Semantics(
       button: true,
       label: 'Grades hidden. Show grades',
@@ -69,18 +61,29 @@ class GradeCurtain extends ConsumerWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Blurred and faded, so the shape of the data doesn't show.
-            ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 14, sigmaY: 14, tileMode: TileMode.decal),
-              child: Opacity(opacity: 0.35, child: IgnorePointer(child: child)),
+            // Laid out (so the card keeps its height) but never painted:
+            // nothing of the data shows, and there's no blur to redraw.
+            Visibility(
+              visible: false,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: IgnorePointer(child: child),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.visibility_off_outlined, color: theme.colorScheme.onSurfaceVariant),
+                Icon(Icons.visibility_off_outlined, color: muted),
                 const SizedBox(height: 4),
-                Text('Grades hidden · tap to show',
-                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                Text('Grades hidden · tap to show', style: theme.textTheme.bodySmall?.copyWith(color: muted)),
               ],
             ),
           ],

@@ -22,7 +22,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Not signed in'), findsOneWidget);
+    expect(find.text('Sign in to get started'), findsOneWidget);
     expect(find.text('Overview'), findsOneWidget);
 
     await tester.tap(find.text('Services'));
@@ -52,7 +52,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
+    expect(find.text('Next class: CSC 2101 Lecture'), findsOneWidget);
     expect(find.textContaining('Now:'), findsNothing);
     expect(find.text('Tomorrow, 09:00 – 11:00 · E2-03-01'), findsOneWidget);
   });
@@ -80,7 +80,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Now: CSC 1001 Lecture'), findsOneWidget);
-    expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
+    expect(find.text('Next class: CSC 2101 Lecture'), findsOneWidget);
   });
 
   testWidgets('GPA is hidden on Home until the eye is tapped', (tester) async {

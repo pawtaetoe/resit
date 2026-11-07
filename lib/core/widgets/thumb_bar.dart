@@ -56,18 +56,11 @@ class ThumbBar extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (canPop)
-                          SizedBox.square(
-                            dimension: height,
-                            child: IconButton.filledTonal(
-                              tooltip: 'Back',
-                              iconSize: 24,
-                              // Same rounded square as the bar's buttons.
-                              style: IconButton.styleFrom(
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
-                              onPressed: () => Navigator.of(context).maybePop(),
-                              icon: const Icon(Icons.arrow_back),
-                            ),
+                          ThumbIconButton(
+                            tooltip: 'Back',
+                            icon: Icons.arrow_back,
+                            tonal: true,
+                            onPressed: () => Navigator.of(context).maybePop(),
                           ),
                         if (canPop && child != null) const SizedBox(width: 12),
                         if (child != null) Expanded(child: child!),
@@ -80,6 +73,43 @@ class ThumbBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// A square icon button the height of a [ThumbBar]'s controls, with the
+/// same rounded corners as its other buttons. Outlined by default; [tonal]
+/// for back. [selected] shows the filled look for an on/off button.
+class ThumbIconButton extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final IconData? selectedIcon;
+  final VoidCallback? onPressed;
+  final bool tonal;
+  final bool? selected;
+
+  const ThumbIconButton({
+    super.key,
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    this.selectedIcon,
+    this.tonal = false,
+    this.selected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)));
+    final i = Icon(icon);
+    final si = selectedIcon == null ? null : Icon(selectedIcon);
+    return SizedBox.square(
+      dimension: ThumbBar.heightOf(context),
+      child: tonal
+          ? IconButton.filledTonal(
+              tooltip: tooltip, style: style, isSelected: selected, onPressed: onPressed, icon: i, selectedIcon: si)
+          : IconButton.outlined(
+              tooltip: tooltip, style: style, isSelected: selected, onPressed: onPressed, icon: i, selectedIcon: si),
     );
   }
 }
@@ -158,15 +188,27 @@ class ThumbToggle<T> extends StatelessWidget {
 }
 
 /// Title-only app bar for screens that use [ThumbBar]: back lives at the
-/// bottom, so it isn't repeated in the hard-to-reach top corner.
-AppBar thumbAppBar(String title, {Widget? subtitle}) => AppBar(
+/// bottom, so it isn't repeated in the hard-to-reach top corner. [subtitle]
+/// is one muted line under the title.
+AppBar thumbAppBar(String title, {String? subtitle}) => AppBar(
       automaticallyImplyLeading: false,
       title: subtitle == null
           ? Text(title)
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [Text(title), subtitle],
-            ),
+          : Builder(builder: (context) {
+              final theme = Theme.of(context);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              );
+            }),
     );
 
 /// A choice in [showChoiceSheet].
