@@ -28,12 +28,23 @@ String formatHours(int minutes) {
   return h == h.roundToDouble() ? '${h.round()} h' : '${h.toStringAsFixed(1)} h';
 }
 
+final _bookingDateFormat = DateFormat('d MMM yyyy');
+
+/// Parsed dates by booking (bookings are immutable), boxed so an
+/// unreadable date (null) is remembered too.
+final _parsedDates = Expando<(DateTime?,)>('bookingDate');
+
 DateTime? bookingDate(Booking b) {
+  final known = _parsedDates[b];
+  if (known != null) return known.$1;
+  DateTime? date;
   try {
-    return DateFormat('d MMM yyyy').parse(b.date.trim());
+    date = _bookingDateFormat.parse(b.date.trim());
   } catch (_) {
-    return null;
+    date = null;
   }
+  _parsedDates[b] = (date,);
+  return date;
 }
 
 /// When a booking starts (its date plus the start of "13:00-15:00").
@@ -99,8 +110,26 @@ class WeeklyQuota {
 
   const WeeklyQuota(this.week, this.usedMinutes, {this.unknownBookings = 0});
 
+  /// The last inputs [WeeklyQuota.from] saw, and its answers for them by
+  /// week: screens ask for the same week several times a frame.
+  static Iterable<Booking>? _memoBookings;
+  static Map<String, String>? _memoTypes;
+  static final Map<DateTime, WeeklyQuota> _memo = {};
+
+  /// The allowance used in the week containing [day]. Answers are reused
+  /// while the same [bookings] and [typeByName] objects are passed in (as
+  /// the providers do until the data is fetched again).
   factory WeeklyQuota.from(Iterable<Booking> bookings, DateTime day, Map<String, String> typeByName) {
     final week = weekStart(day);
+    if (!identical(bookings, _memoBookings) || !identical(typeByName, _memoTypes)) {
+      _memoBookings = bookings;
+      _memoTypes = typeByName;
+      _memo.clear();
+    }
+    return _memo[week] ??= WeeklyQuota._count(bookings, week, typeByName);
+  }
+
+  factory WeeklyQuota._count(Iterable<Booking> bookings, DateTime week, Map<String, String> typeByName) {
     final nextWeek = DateTime(week.year, week.month, week.day + 7);
     final used = <String, int>{};
     var unknown = 0;

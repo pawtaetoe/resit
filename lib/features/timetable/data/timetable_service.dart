@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
 import 'package:intl/intl.dart';
 import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/network/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 
 /// One class meeting on a specific date.
@@ -48,24 +47,25 @@ class WeekSchedule {
 }
 
 /// Reads the "My Class Schedule > Weekly Calendar View" page of in4sit. The
-/// page is stateful on the server (PeopleSoft), so requests are serialised and
-/// the form state is carried from one response to the next.
+/// page is stateful on the server (PeopleSoft), so requests go through the
+/// app's one [In4SitQueue] and the form state is carried from one response
+/// to the next.
 class TimetableService {
   final AuthService auth;
 
-  TimetableService(this.auth);
+  /// Shared with every other in4SIT reader, so their requests take turns.
+  final In4SitQueue queue;
+
+  TimetableService(this.auth, {In4SitQueue? queue}) : queue = queue ?? In4SitQueue();
 
   static const String pageUrl =
       "https://in4sit.singaporetech.edu.sg/psc/CSSISSTD/EMPLOYEE/SA/c/SA_LEARNER_SERVICES.SSR_SSENRL_SCHD_W.GBL";
 
   static const String _refreshAction = r'DERIVED_CLASS_S_SSR_REFRESH_CAL$8$';
   static const String _startDateField = 'DERIVED_CLASS_S_START_DT';
-  static const String _formatFieldPrefix = 'DERIVED_REGFRM1_SSR_SCHED_FORMAT';
 
-  Map<String, String> _form = {};
+  late final PeopleSoftPage _page = PeopleSoftPage(auth, Uri.parse(pageUrl), queue: queue);
   WeekSchedule? _current;
-  bool _ready = false;
-  Future<void> _tail = Future.value();
 
   /// The schedule for the week starting on [monday].
   Future<WeekSchedule> week(
@@ -73,12 +73,17 @@ class TimetableService {
     void Function(MfaChallenge challenge)? onMfaChallenge,
   }) {
     Future<WeekSchedule> load() async {
-      if (!_ready) await _open(onMfaChallenge);
+      final shown = _current;
+      if (shown != null && shown.monday == monday) return shown;
+
+      // Not open yet, or another in4SIT page (e.g. exam results) was opened
+      // since, which drops this page's state on the server.
+      if (!_page.isOpen) await _open(onMfaChallenge);
 
       final current = _current;
       if (current != null && current.monday == monday) return current;
 
-      _form[_startDateField] = DateFormat('dd/MM/yyyy').format(monday);
+      _page.setField(_startDateField, DateFormat('dd/MM/yyyy').format(monday));
       final week = await _submit(_refreshAction);
       if (week.monday != monday) {
         debugLog('Timetable: asked for $monday but in4sit returned ${week.monday}');
@@ -86,14 +91,13 @@ class TimetableService {
       return week;
     }
 
-    return _serial(() async {
+    return queue.run(() async {
       try {
         return await load();
       } on _PageLost {
         // in4SIT dropped the page we kept open: it does that after about 20
-        // minutes idle, or when the same sign-in opens another in4SIT page
-        // (e.g. exam results being read in the background). Open it afresh
-        // and ask again, once, instead of showing an error.
+        // minutes idle, or when the same sign-in opens another in4SIT page.
+        // Open it afresh and ask again, once, instead of showing an error.
         debugLog('Timetable: page state lost; reopening');
         reset();
         return await load();
@@ -103,159 +107,86 @@ class TimetableService {
 
   /// Forgets the server-side page state so the next call starts afresh.
   void reset() {
-    _ready = false;
     _current = null;
-    _form = {};
-  }
-
-  Future<T> _serial<T>(Future<T> Function() task) {
-    final completer = Completer<T>();
-    _tail = _tail.then((_) async {
-      try {
-        completer.complete(await task());
-      } catch (e, s) {
-        completer.completeError(e, s);
-      }
-    });
-    return completer.future;
+    _page.close();
   }
 
   Future<void> _open(void Function(MfaChallenge)? onMfaChallenge) async {
     reset();
-    final target = Uri.parse(pageUrl);
-    final response = await auth.getWithSso(target, onMfaChallenge: onMfaChallenge);
-    debugLog('Timetable open: status ${response.statusCode}, URL: ${response.request?.url}');
-
-    // Still on ADFS (or anywhere but in4sit) means SSO could not sign us in.
-    final landed = response.request?.url;
-    if (landed != null && landed.host != target.host) {
-      final doc = parser.parse(response.body);
-      final title = doc.querySelector('title')?.text.trim() ?? '';
-      final hasPassword = doc.querySelector('input[type="password"]') != null;
-      throw SessionExpiredException(
-          'Landed on ${landed.host}${landed.path}'
-          '${title.isNotEmpty ? ' ("$title")' : ''}'
-          '${hasPassword ? ', which is asking for a password' : ''}.');
+    final ({String body, TimetableReply data}) opened;
+    try {
+      opened = await _page.openWith(readTimetableReply, onMfaChallenge: onMfaChallenge);
+    } on In4SitHttpException catch (e) {
+      throw Exception('Failed to load timetable: ${e.statusCode}');
     }
-    if (response.statusCode >= 400) {
-      throw Exception('Failed to load timetable: ${response.statusCode}');
-    }
-
-    final doc = parser.parse(_unwrapFields(response.body));
-    _form = _collectForm(doc);
-    var week = parseWeek(response.body);
+    debugLog('Timetable open: ${opened.body.length} chars');
+    var week = opened.data.week;
 
     // The page remembers the last display option; make sure it is the calendar.
-    final weekly = doc
-        .querySelectorAll('input[type="radio"]')
-        .where((i) => (i.attributes['name'] ?? '').startsWith(_formatFieldPrefix) && i.attributes['value'] == 'W')
-        .firstOrNull;
-    if (weekly != null && !weekly.attributes.containsKey('checked')) {
-      _form[weekly.attributes['name']!] = 'W';
-      _ready = true;
-      week = await _submit(weekly.attributes['id'] ?? weekly.attributes['name']!);
+    final weekly = opened.data.weeklyRadio;
+    if (weekly != null && !weekly.checked) {
+      _page.setField(weekly.name, 'W');
+      week = await _submit(weekly.id);
     }
 
     if (week == null) {
       debugLog('Timetable: no weekly grid found. First 500 chars:');
-      debugLog(response.body.substring(0, response.body.length.clamp(0, 500)));
+      debugLog(opened.body.substring(0, opened.body.length.clamp(0, 500)));
+      reset();
       throw Exception('in4sit did not return the weekly schedule.');
     }
     _current = week;
-    _ready = true;
   }
 
   /// Presses a button on the page and returns the resulting week.
   Future<WeekSchedule> _submit(String action) async {
-    final body = Map<String, String>.from(_form)
-      ..['ICAJAX'] = '1'
-      ..['ICNAVTYPEDROPDOWN'] = '0'
-      ..['ICChanged'] = '1'
-      ..['ICAction'] = action;
-
-    final response = await auth.client.post(
-      Uri.parse(pageUrl),
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-        'referer': pageUrl,
-        'origin': 'https://in4sit.singaporetech.edu.sg',
-      },
-      body: body,
-    );
-    debugLog('Timetable submit $action: status ${response.statusCode}, ${response.body.length} chars');
-
-    final week = response.statusCode == 200 ? parseWeek(response.body) : null;
+    final ({String body, TimetableReply data}) reply;
+    try {
+      reply = await _page.pressWith(action, readTimetableReply);
+    } on In4SitHttpException {
+      reset();
+      throw const _PageLost();
+    }
+    final week = reply.data.week;
     if (week == null) {
-      final start = response.body.replaceAll(RegExp(r'\s+'), ' ');
+      final start = reply.body.substring(0, reply.body.length.clamp(0, 600)).replaceAll(RegExp(r'\s+'), ' ');
       debugLog('Timetable: no week in the reply. Starts: ${start.substring(0, start.length.clamp(0, 300))}');
       // Start over on the next call.
       reset();
       throw const _PageLost();
     }
-
-    _absorb(response.body);
     _current = week;
     return week;
   }
+}
 
-  /// Everything a browser would submit for the page's form.
-  Map<String, String> _collectForm(dom.Document doc) {
-    final form = doc.querySelector('form[name="win0"]') ?? doc.querySelector('form#win0');
-    final scope = form ?? doc.documentElement!;
-    final fields = <String, String>{};
-    _readInputs(scope, fields);
-    fields['ICAction'] = 'None';
-    return fields;
-  }
+/// What the timetable needs from one in4SIT reply.
+class TimetableReply {
+  /// The week shown, or null if the reply has no weekly grid.
+  final WeekSchedule? week;
 
-  void _readInputs(dom.Element scope, Map<String, String> fields) {
-    for (final el in scope.querySelectorAll('input, select, textarea')) {
-      final name = el.attributes['name'];
-      if (name == null || name.isEmpty) continue;
+  /// The "Weekly Calendar View" display option, if the page has it.
+  final ({String name, String id, bool checked})? weeklyRadio;
 
-      if (el.localName == 'select') {
-        final selected = el.querySelector('option[selected]') ?? el.querySelector('option');
-        fields[name] = selected?.attributes['value'] ?? selected?.text ?? '';
-      } else if (el.localName == 'textarea') {
-        fields[name] = el.text;
-      } else {
-        final type = (el.attributes['type'] ?? 'text').toLowerCase();
-        switch (type) {
-          case 'button':
-          case 'submit':
-          case 'image':
-          case 'reset':
-            break;
-          case 'checkbox':
-            if (el.attributes.containsKey('checked')) {
-              fields[name] = el.attributes['value'] ?? 'on';
-            } else {
-              fields.remove(name);
-            }
-          case 'radio':
-            if (el.attributes.containsKey('checked')) fields[name] = el.attributes['value'] ?? '';
-          default:
-            fields[name] = el.attributes['value'] ?? '';
-        }
-      }
-    }
-  }
+  const TimetableReply(this.week, this.weeklyRadio);
+}
 
-  /// Carries the page state forward from an AJAX response: new field values
-  /// and the server's state counter (which must match on the next request).
-  void _absorb(String body) {
-    final doc = parser.parse(_unwrapFields(body));
-    _readInputs(doc.documentElement!, _form);
+const _formatFieldPrefix = 'DERIVED_REGFRM1_SSR_SCHED_FORMAT';
 
-    final state = RegExp(r'ICStateNum\.value\s*=\s*(\d+)').firstMatch(body);
-    if (state != null) {
-      _form['ICStateNum'] = state.group(1)!;
-    } else {
-      _form['ICStateNum'] = '${(int.tryParse(_form['ICStateNum'] ?? '') ?? 0) + 1}';
-    }
-    _form['ICAction'] = 'None';
-    _form['ICResubmit'] = '0';
-  }
+/// Reads a parsed timetable reply: the week and the display option. Pure,
+/// so it can run on a background isolate.
+TimetableReply readTimetableReply(dom.Document doc, String html) {
+  final radio = doc
+      .querySelectorAll('input[type="radio"]')
+      .where((i) => (i.attributes['name'] ?? '').startsWith(_formatFieldPrefix) && i.attributes['value'] == 'W')
+      .firstOrNull;
+  final name = radio?.attributes['name'];
+  return TimetableReply(
+    parseWeekDoc(doc, html),
+    radio == null || name == null
+        ? null
+        : (name: name, id: radio.attributes['id'] ?? name, checked: radio.attributes.containsKey('checked')),
+  );
 }
 
 /// in4SIT answered without the weekly grid: the page state we kept is gone.
@@ -266,27 +197,21 @@ class _PageLost implements Exception {
   String toString() => "in4SIT didn't send this week's timetable. Try again in a moment.";
 }
 
-/// PeopleSoft answers ICAJAX requests with XML whose <FIELD> elements wrap the
-/// real HTML in CDATA; a normal page load is plain HTML. Handle both.
-String _unwrapFields(String body) {
-  if (!body.contains('<![CDATA[')) return body;
-  final buf = StringBuffer();
-  final re = RegExp(r'<FIELD\b[^>]*><!\[CDATA\[(.*?)\]\]></FIELD>', dotAll: true, caseSensitive: false);
-  for (final m in re.allMatches(body)) {
-    buf.write(m.group(1));
-  }
-  return buf.isEmpty ? body : buf.toString();
-}
-
 /// Parses the weekly calendar grid, or returns null if the page has none.
 WeekSchedule? parseWeek(String body) {
-  final doc = parser.parse(_unwrapFields(body));
+  final html = unwrapPeopleSoft(body);
+  return parseWeekDoc(parser.parse(html), html);
+}
+
+// "Week of 5/10/2026 - 11/10/2026", allowing for tags and &nbsp; between.
+final _weekOf = RegExp(r'Week of(?:\s|&nbsp;|&#160;|\u00a0|<[^>]*>)+(\d{1,2})/(\d{1,2})/(\d{4})');
+
+/// [parseWeek] for an already parsed page; [html] is the HTML it came from.
+WeekSchedule? parseWeekDoc(dom.Document doc, String html) {
   final table = doc.getElementById('WEEKLY_SCHED_HTMLAREA');
   if (table == null) return null;
 
-  // "Week of 5/10/2026 - 11/10/2026"
-  final text = doc.body?.text.replaceAll(RegExp(r'\s+'), ' ') ?? '';
-  final label = RegExp(r'Week of\s+(\d{1,2})/(\d{1,2})/(\d{4})').firstMatch(text);
+  final label = _weekOf.firstMatch(html);
   if (label == null) return null;
   final monday = DateTime(int.parse(label.group(3)!), int.parse(label.group(2)!), int.parse(label.group(1)!));
 

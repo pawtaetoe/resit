@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
 import 'package:http/http.dart' as http;
@@ -51,6 +54,26 @@ class AcademicWeek {
 
   bool get hasHoliday => holidayWeekendOrMonday || holidayWeekday;
 
+  Map<String, Object?> toJson() => {
+        'number': number,
+        'phase': phase.name,
+        'schedule': schedule,
+        'start': _day(start),
+        'end': _day(end),
+        if (holidayWeekendOrMonday) 'holidayWeekendOrMonday': true,
+        if (holidayWeekday) 'holidayWeekday': true,
+      };
+
+  factory AcademicWeek.fromJson(Map<String, Object?> j) => AcademicWeek(
+        number: (j['number'] as num).toInt(),
+        phase: WeekPhase.values.asNameMap()[j['phase']] ?? WeekPhase.other,
+        schedule: j['schedule'] as String? ?? '',
+        start: DateTime.parse(j['start'] as String),
+        end: DateTime.parse(j['end'] as String),
+        holidayWeekendOrMonday: j['holidayWeekendOrMonday'] == true,
+        holidayWeekday: j['holidayWeekday'] == true,
+      );
+
   bool contains(DateTime day) {
     final d = DateTime(day.year, day.month, day.day);
     return !d.isBefore(start) && !d.isAfter(end);
@@ -69,6 +92,18 @@ class AcademicTerm {
 
   /// Teaching weeks plus final assessment, i.e. up to the trimester break.
   List<AcademicWeek> get termWeeks => weeks.where((w) => w.phase != WeekPhase.trimesterBreak).toList();
+
+  Map<String, Object?> toJson() => {
+        'name': name,
+        'academicYear': academicYear,
+        'weeks': [for (final w in weeks) w.toJson()],
+      };
+
+  factory AcademicTerm.fromJson(Map<String, Object?> j) => AcademicTerm(
+        name: j['name'] as String? ?? '',
+        academicYear: j['academicYear'] as String? ?? '',
+        weeks: [for (final w in j['weeks'] as List) AcademicWeek.fromJson((w as Map).cast<String, Object?>())],
+      );
 }
 
 class AcademicYear {
@@ -76,7 +111,28 @@ class AcademicYear {
   final List<AcademicTerm> terms;
 
   const AcademicYear({required this.label, required this.terms});
+
+  Map<String, Object?> toJson() => {
+        'label': label,
+        'terms': [for (final t in terms) t.toJson()],
+      };
+
+  factory AcademicYear.fromJson(Map<String, Object?> j) => AcademicYear(
+        label: j['label'] as String? ?? '',
+        terms: [for (final t in j['terms'] as List) AcademicTerm.fromJson((t as Map).cast<String, Object?>())],
+      );
 }
+
+/// "2026-09-01": a date without a time or zone, as saved.
+String _day(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+/// The calendar as saved on the device.
+String encodeAcademicYears(List<AcademicYear> years) => jsonEncode([for (final y in years) y.toJson()]);
+
+List<AcademicYear> decodeAcademicYears(String json) => [
+      for (final y in jsonDecode(json) as List) AcademicYear.fromJson((y as Map).cast<String, Object?>()),
+    ];
 
 /// Where a date sits in the calendar.
 class CalendarPosition {
@@ -261,7 +317,10 @@ String _text(dom.Element el) => el.text.replaceAll(' ', ' ').replaceAll(RegExp(
 class AcademicCalendarService {
   static final pageUrl =
       Uri.parse('https://www.singaporetech.edu.sg/admissions/undergraduate/academic-calendar-sit-and-joint-programmes');
+  /// Older versions saved the page's HTML; it's still read if no parsed
+  /// copy has been saved yet.
   static const _keyHtml = 'academic_calendar_html';
+  static const _keyJson = 'academic_calendar_json';
   static const _keyFetched = 'academic_calendar_fetched';
 
   /// The calendar rarely changes; a copy this fresh isn't re-fetched.
@@ -276,9 +335,8 @@ class AcademicCalendarService {
   /// always tries the website first.
   Future<AcademicCalendar> load({bool force = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    final savedHtml = prefs.getString(_keyHtml);
     final savedAt = DateTime.fromMillisecondsSinceEpoch(prefs.getInt(_keyFetched) ?? 0);
-    final saved = savedHtml == null ? null : AcademicCalendar(parseAcademicCalendar(savedHtml), savedAt);
+    final saved = _saved(prefs, savedAt);
 
     if (!force && saved != null && saved.years.isNotEmpty && DateTime.now().difference(savedAt) < maxAge) {
       return saved;
@@ -288,15 +346,30 @@ class AcademicCalendarService {
       final response = await _client.get(pageUrl).timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) throw Exception('SIT website returned ${response.statusCode}.');
       final html = response.body;
-      final years = parseAcademicCalendar(html);
+      final years = await compute(parseAcademicCalendar, html, debugLabel: 'academic calendar');
       if (years.isEmpty) throw Exception("Couldn't find the calendar on SIT's website.");
       final now = DateTime.now();
-      await prefs.setString(_keyHtml, html);
+      await prefs.setString(_keyJson, encodeAcademicYears(years));
       await prefs.setInt(_keyFetched, now.millisecondsSinceEpoch);
+      await prefs.remove(_keyHtml);
       return AcademicCalendar(years, now);
     } catch (e) {
       if (saved != null && saved.years.isNotEmpty) return saved;
       rethrow;
     }
+  }
+
+  /// The saved calendar: the parsed copy, or an older version's saved HTML.
+  AcademicCalendar? _saved(SharedPreferences prefs, DateTime savedAt) {
+    final json = prefs.getString(_keyJson);
+    if (json != null) {
+      try {
+        return AcademicCalendar(decodeAcademicYears(json), savedAt);
+      } catch (_) {
+        // Unreadable: fall back to the HTML, if any, or fetch afresh.
+      }
+    }
+    final html = prefs.getString(_keyHtml);
+    return html == null ? null : AcademicCalendar(parseAcademicCalendar(html), savedAt);
   }
 }

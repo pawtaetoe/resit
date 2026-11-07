@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/network/peoplesoft.dart';
+import 'package:resit/core/network/session_client.dart';
+import 'package:resit/features/common/data/private_store.dart';
 
 /// A term listed on in4SIT's "View My Exam Results" page.
 class ExamTerm {
@@ -14,6 +17,15 @@ class ExamTerm {
   final String institution;
 
   const ExamTerm({required this.index, required this.name, this.career = '', this.institution = ''});
+
+  Map<String, Object?> toJson() => {'index': index, 'name': name, 'career': career, 'institution': institution};
+
+  factory ExamTerm.fromJson(Map<String, Object?> j) => ExamTerm(
+        index: (j['index'] as num?)?.toInt() ?? 0,
+        name: j['name'] as String? ?? '',
+        career: j['career'] as String? ?? '',
+        institution: j['institution'] as String? ?? '',
+      );
 }
 
 /// One course on a result slip.
@@ -36,6 +48,24 @@ class CourseResult {
 
   /// Still in progress, so there's no grade yet.
   bool get inProgress => grade.toUpperCase() == 'IP';
+
+  Map<String, Object?> toJson() => {
+        'code': code,
+        'title': title,
+        'credits': credits,
+        'gradePoints': gradePoints,
+        'grade': grade,
+        'remark': remark,
+      };
+
+  factory CourseResult.fromJson(Map<String, Object?> j) => CourseResult(
+        code: j['code'] as String? ?? '',
+        title: j['title'] as String? ?? '',
+        credits: j['credits'] as String? ?? '',
+        gradePoints: j['gradePoints'] as String? ?? '',
+        grade: j['grade'] as String? ?? '',
+        remark: j['remark'] as String? ?? '',
+      );
 }
 
 /// One term's "Examination Result Slip" from in4SIT.
@@ -73,21 +103,161 @@ class ExamResults {
   bool get notReleased =>
       courses.isEmpty && RegExp(r'not (been |yet )?released', caseSensitive: false).hasMatch(pageText ?? '');
 
+  /// A released slip with its courses. Released slips don't change, so these
+  /// are kept and not read again (see [ExamSlipStore]).
+  bool get released => !notReleased && courses.isNotEmpty;
+
   String? value(String label) {
     for (final (l, v) in [...standing, ...details]) {
       if (l.toLowerCase() == label.toLowerCase()) return v;
     }
     return null;
   }
+
+  /// The same slip under [term] (e.g. with the term's current row number).
+  ExamResults withTerm(ExamTerm term) => ExamResults(
+        term: term,
+        heading: heading.isEmpty ? term.name : heading,
+        courses: courses,
+        standing: standing,
+        details: details,
+        note: note,
+        pageText: pageText,
+      );
+
+  Map<String, Object?> toJson() => {
+        'term': term.toJson(),
+        'heading': heading,
+        'courses': [for (final c in courses) c.toJson()],
+        'standing': [
+          for (final (l, v) in standing) [l, v]
+        ],
+        'details': [
+          for (final (l, v) in details) [l, v]
+        ],
+        'note': note,
+        'pageText': pageText,
+      };
+
+  factory ExamResults.fromJson(Map<String, Object?> j) {
+    List<(String, String)> pairs(Object? list) => [
+          for (final p in (list as List?) ?? const [])
+            if (p is List && p.length == 2) ('${p[0]}', '${p[1]}')
+        ];
+    return ExamResults(
+      term: ExamTerm.fromJson(((j['term'] as Map?) ?? const {}).cast<String, Object?>()),
+      heading: j['heading'] as String? ?? '',
+      courses: [
+        for (final c in (j['courses'] as List?) ?? const []) CourseResult.fromJson((c as Map).cast<String, Object?>())
+      ],
+      standing: pairs(j['standing']),
+      details: pairs(j['details']),
+      note: j['note'] as String?,
+      pageText: j['pageText'] as String?,
+    );
+  }
+}
+
+/// Released result slips, kept encrypted on the device: released slips don't
+/// change, so each is read from in4SIT once. Also keeps the last term list.
+class ExamSlipStore {
+  static const _key = 'exam_slips';
+
+  final PrivateStore _store;
+  Future<_SlipData>? _data;
+  Future<void> _writes = Future.value();
+
+  ExamSlipStore([PrivateStore? store]) : _store = store ?? PrivateStore();
+
+  Future<_SlipData> _load() => _data ??= () async {
+        try {
+          final raw = await _store.read(_key);
+          if (raw == null) return _SlipData();
+          final j = (jsonDecode(raw) as Map).cast<String, Object?>();
+          return _SlipData(
+            terms: [
+              for (final t in (j['terms'] as List?) ?? const []) ExamTerm.fromJson((t as Map).cast<String, Object?>())
+            ],
+            slips: {
+              for (final e in ((j['slips'] as Map?) ?? const {}).entries)
+                e.key as String: ExamResults.fromJson((e.value as Map).cast<String, Object?>()),
+            },
+          );
+        } catch (_) {
+          return _SlipData();
+        }
+      }();
+
+  Future<void> _save() {
+    return _writes = _writes.then((_) async {
+      final data = await _load();
+      try {
+        await _store.write(
+            _key,
+            jsonEncode({
+              'terms': [for (final t in data.terms) t.toJson()],
+              'slips': {for (final e in data.slips.entries) e.key: e.value.toJson()},
+            }));
+      } catch (_) {
+        // Not kept this time; it is read from in4SIT again next time.
+      }
+    });
+  }
+
+  /// The kept released slip for the term named [termName], if any.
+  Future<ExamResults?> slip(String termName) async => (await _load()).slips[termName];
+
+  /// Keeps [slip] if it is released.
+  Future<void> save(ExamResults slip) async {
+    if (!slip.released) return;
+    (await _load()).slips[slip.term.name] = slip;
+    await _save();
+  }
+
+  /// The term list last read from in4SIT, latest first (empty if none).
+  Future<List<ExamTerm>> terms() async => List.of((await _load()).terms);
+
+  Future<void> saveTerms(List<ExamTerm> terms) async {
+    (await _load()).terms = List.of(terms);
+    await _save();
+  }
+
+  Future<void> clear() async {
+    final data = await _load();
+    data.slips.clear();
+    data.terms = [];
+    await _writes;
+    try {
+      await _store.delete(_key);
+    } catch (_) {}
+  }
+}
+
+class _SlipData {
+  List<ExamTerm> terms;
+  final Map<String, ExamResults> slips;
+  _SlipData({List<ExamTerm>? terms, Map<String, ExamResults>? slips})
+      : terms = terms ?? [],
+        slips = slips ?? {};
 }
 
 /// Reads "View My Exam Results" on in4SIT. The page is stateful on the server
-/// (PeopleSoft), so requests run one at a time, and each term's results are
-/// fetched from a freshly opened page: open, View, pick the term, Continue.
+/// (PeopleSoft), so requests go through the app's one [In4SitQueue]. The page
+/// is kept open between calls: the term list, then Continue for a term's
+/// slip, then "View Other Term" back to the list for the next one, so going
+/// through several terms doesn't reopen the page (and sign in) for each.
 class ExamService {
   final AuthService auth;
 
-  ExamService(this.auth);
+  /// Shared with every other in4SIT reader, so their requests take turns.
+  final In4SitQueue queue;
+
+  /// Released slips kept on the device.
+  final ExamSlipStore slips;
+
+  ExamService(this.auth, {In4SitQueue? queue, ExamSlipStore? slips})
+      : queue = queue ?? In4SitQueue(),
+        slips = slips ?? ExamSlipStore();
 
   static final pageUrl =
       Uri.parse('https://in4sit.singaporetech.edu.sg/psc/CSSISSTD/EMPLOYEE/SA/c/N_MANAGE_EXAMS.N_RSLT_SLIP_COMP.GBL');
@@ -95,71 +265,149 @@ class ExamService {
   static const continueAction = r'N_RSLT_SLIP_WRK_CONTINUE_PB$0';
   static const termRadio = r'N_EX_PRVRSL_TBL$sels$0';
 
-  Future<void> _tail = Future.value();
+  /// in4SIT drops a page left idle for about 20 minutes; reopen before then.
+  static const _pageLife = Duration(minutes: 15);
+
   final Map<String, ExamResults> _cache = {};
+
+  PeopleSoftPage? _page;
+  DateTime _openedAt = DateTime(0);
+
+  /// The term list the page shows now, or null when it shows a slip.
+  List<ExamTerm>? _listed;
 
   /// The terms that have results, latest first.
   Future<List<ExamTerm>> terms({void Function(MfaChallenge)? onMfaChallenge}) {
-    return _serial(() async {
-      final (_, terms) = await _openTermList(onMfaChallenge);
-      return terms.reversed.toList();
+    return queue.run(() async {
+      final (terms, _) = await _termList(onMfaChallenge);
+      final latestFirst = terms.reversed.toList();
+      unawaited(slips.saveTerms(latestFirst));
+      return latestFirst;
     });
   }
 
-  /// The results for [term]. Cached for the session; pass [refresh] to fetch
-  /// again.
-  Future<ExamResults> results(ExamTerm term, {bool refresh = false, void Function(MfaChallenge)? onMfaChallenge}) {
-    return _serial(() async {
-      final cached = _cache[term.name];
-      if (cached != null && !refresh) return cached;
+  /// The term list last read, latest first, to show before [terms] answers.
+  Future<List<ExamTerm>> savedTerms() => slips.terms();
 
-      final (page, terms) = await _openTermList(onMfaChallenge);
-      // Rows can shift between visits; find the term by name.
-      final row = terms.firstWhere((t) => t.name == term.name, orElse: () => term);
-      // The browser sends the picked row under the radio's id
-      // (N_EX_PRVRSL_TBL$sels$2$$0 = 2); the radio's name is sent too.
-      final body = await page.press(continueAction, fields: {
-        termRadio: '${row.index}',
-        'N_EX_PRVRSL_TBL\$sels\$${row.index}\$\$0': '${row.index}',
-      });
-      final results = parseExamResults(body, term);
+  /// The results for [term]. A released slip is kept on the device and
+  /// returned from there; others are kept for the session. Pass [refresh] to
+  /// read it from in4SIT again.
+  Future<ExamResults> results(ExamTerm term, {bool refresh = false, void Function(MfaChallenge)? onMfaChallenge}) {
+    return queue.run(() async {
+      if (!refresh) {
+        final cached = _cache[term.name] ?? await slips.slip(term.name);
+        if (cached != null) return cached.withTerm(term);
+      }
+      final results = await _readSlip(term, onMfaChallenge);
       _cache[term.name] = results;
+      await slips.save(results);
       return results;
     });
   }
 
-  /// Opens the page and gets to the term list (pressing View if the page
-  /// doesn't show it straight away).
-  Future<(PeopleSoftPage, List<ExamTerm>)> _openTermList(void Function(MfaChallenge)? onMfaChallenge) async {
-    final page = PeopleSoftPage(auth, pageUrl);
-    final opened = await page.open(onMfaChallenge: onMfaChallenge);
-    var terms = parseExamTerms(opened);
-    if (terms.isEmpty) {
-      terms = parseExamTerms(await page.press(viewAction));
-    }
-    if (terms.isEmpty) {
-      auth.note('Exam results: no term list. Page: ${describeHtmlPage(unwrapPeopleSoft(opened))}');
-      throw Exception('in4SIT did not show the list of terms.');
-    }
-    return (page, terms);
+  /// Forgets every slip kept, in memory and on the device.
+  Future<void> clearSaved() async {
+    _cache.clear();
+    _page?.close();
+    _page = null;
+    _listed = null;
+    await slips.clear();
   }
 
-  Future<T> _serial<T>(Future<T> Function() task) {
-    final completer = Completer<T>();
-    _tail = _tail.then((_) async {
+  bool get _pageUsable =>
+      _page != null && _page!.isOpen && DateTime.now().difference(_openedAt) < _pageLife;
+
+  /// Picks [term] in the term list and presses Continue. If the page kept
+  /// from before turns out to be gone, opens it afresh and tries once more.
+  Future<ExamResults> _readSlip(ExamTerm term, void Function(MfaChallenge)? onMfaChallenge) async {
+    for (var attempt = 0;; attempt++) {
+      final (terms, opened) = await _termList(onMfaChallenge);
+      // Rows can shift between visits; find the term by name.
+      final row = terms.firstWhere((t) => t.name == term.name, orElse: () => term);
+      // The browser sends the picked row under the radio's id
+      // (N_EX_PRVRSL_TBL$sels$2$$0 = 2); the radio's name is sent too.
+      final ({String body, ExamSlipReply data}) reply;
       try {
-        completer.complete(await task());
-      } catch (e, s) {
-        completer.completeError(e, s);
+        _listed = null;
+        reply = await _page!.pressWith(continueAction, readExamSlip, fields: {
+          termRadio: '${row.index}',
+          'N_EX_PRVRSL_TBL\$sels\$${row.index}\$\$0': '${row.index}',
+        });
+      } on In4SitHttpException {
+        if (opened || attempt > 0) rethrow;
+        _page?.close();
+        continue;
       }
-    });
-    return completer.future;
+      if (!reply.data.isSlip && !opened && attempt == 0) {
+        auth.note('Exam results: the kept page was gone; reopening');
+        _page?.close();
+        continue;
+      }
+      return reply.data.results.withTerm(term);
+    }
+  }
+
+  /// The term list, in grid order, and whether the page was opened afresh
+  /// for it. Reuses the open page where it can: as is if it shows the list,
+  /// or with "View Other Term" if it shows a slip.
+  Future<(List<ExamTerm>, bool opened)> _termList(void Function(MfaChallenge)? onMfaChallenge) async {
+    final page = _page;
+    if (page != null && _pageUsable) {
+      final listed = _listed;
+      if (listed != null) return (listed, false);
+      try {
+        final viewed = await page.pressWith(viewAction, readExamTermList);
+        if (viewed.data.terms.isNotEmpty) return (_listed = viewed.data.terms, false);
+      } catch (_) {
+        // Gone; open it afresh below.
+      }
+    }
+    return (await _openTermList(onMfaChallenge), true);
+  }
+
+  /// Opens the page and gets to the term list (pressing View if the page
+  /// doesn't show it straight away).
+  Future<List<ExamTerm>> _openTermList(void Function(MfaChallenge)? onMfaChallenge) async {
+    _listed = null;
+    final page = _page ??= PeopleSoftPage(auth, pageUrl, queue: queue);
+    final opened = await page.openWith(readExamTermList, onMfaChallenge: onMfaChallenge);
+    _openedAt = DateTime.now();
+    var list = opened.data;
+    if (list.terms.isEmpty) {
+      list = (await page.pressWith(viewAction, readExamTermList)).data;
+    }
+    if (list.terms.isEmpty) {
+      auth.note('Exam results: no term list. Page: ${opened.data.description ?? ''}');
+      throw Exception('in4SIT did not show the list of terms.');
+    }
+    debugLog('Exam results: ${list.terms.length} terms');
+    return _listed = list.terms;
   }
 }
 
+/// The term list on a parsed page, and a description of the page when it
+/// has none (for troubleshooting). Pure, so it can run on an isolate.
+({List<ExamTerm> terms, String? description}) readExamTermList(dom.Document doc, String html) {
+  final terms = parseExamTermsDoc(doc);
+  return (terms: terms, description: terms.isEmpty ? describeHtmlPage(html) : null);
+}
+
+typedef ExamSlipReply = ({ExamResults results, bool isSlip});
+
+const _noTerm = ExamTerm(index: -1, name: '');
+
+/// The slip on a parsed reply, and whether the reply is the result slip
+/// page at all (it has the "View Other Term" link). Pure.
+ExamSlipReply readExamSlip(dom.Document doc, String html) => (
+      results: parseExamResultsDoc(doc, _noTerm),
+      isSlip: html.contains(ExamService.viewAction) || html.contains('Result Slip'),
+    );
+
 /// The terms in the "Select a Term then click Continue" grid.
-List<ExamTerm> parseExamTerms(String body) {
-  final doc = parser.parse(unwrapPeopleSoft(body));
+List<ExamTerm> parseExamTerms(String body) => parseExamTermsDoc(parser.parse(unwrapPeopleSoft(body)));
+
+/// [parseExamTerms] for an already parsed page.
+List<ExamTerm> parseExamTermsDoc(dom.Document doc) {
   final byId = elementsById(doc);
   final terms = <ExamTerm>[];
   for (final radio in doc.querySelectorAll('input[type="radio"]')) {
@@ -187,8 +435,11 @@ List<ExamTerm> parseExamTerms(String body) {
 /// area: "label : value" rows (student details, GPA), a heading such as
 /// "AY 2025/26 Trimester 3", and the course table, which is read by column
 /// name. The grade legend at the bottom is skipped.
-ExamResults parseExamResults(String body, ExamTerm term) {
-  final doc = parser.parse(unwrapPeopleSoft(body));
+ExamResults parseExamResults(String body, ExamTerm term) =>
+    parseExamResultsDoc(parser.parse(unwrapPeopleSoft(body)), term);
+
+/// [parseExamResults] for an already parsed page.
+ExamResults parseExamResultsDoc(dom.Document doc, ExamTerm term) {
 
   // "Label : value" rows, written as three <th> cells.
   final pairs = <(String, String)>[];
