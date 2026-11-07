@@ -1,7 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   final html = File('test/fixtures/sit_academic_calendar.html').readAsStringSync();
@@ -48,6 +51,34 @@ void main() {
     expect(calendar.positionOf(DateTime(2026, 10, 14))?.week.phase, WeekPhase.recess);
     expect(calendar.positionOf(DateTime(2030, 1, 1)), isNull);
     expect(calendar.nextTermAfter(DateTime(2026, 11, 2))?.$2.start, DateTime(2027, 1, 4));
+  });
+
+  test('the parsed calendar round-trips through its saved JSON', () {
+    final back = decodeAcademicYears(encodeAcademicYears(years));
+    expect(back.map((y) => y.label), years.map((y) => y.label));
+    final t1 = back[1].terms[0];
+    expect(t1.weeks, hasLength(18));
+    expect(t1.weeks.first.start, DateTime(2026, 8, 31));
+    expect(t1.weeks[17].end, DateTime(2027, 1, 3));
+    expect(t1.weeks[6].phase, WeekPhase.recess);
+    expect(t1.weeks[9].holidayWeekendOrMonday, isTrue);
+    expect(t1.weeks[16].holidayWeekday, isTrue);
+    expect(AcademicCalendar(back, DateTime(2026)).positionOf(DateTime(2026, 11, 2))?.week.number, 10);
+  });
+
+  test('a calendar saved as HTML by an older version still loads offline', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({'academic_calendar_html': html, 'academic_calendar_fetched': 1});
+    final offline = MockClient((r) async => throw Exception('offline'));
+    final loaded = await AcademicCalendarService(offline).load();
+    expect(loaded.years, hasLength(3));
+
+    // Fetched afresh, it is saved parsed, and the HTML copy goes.
+    final online = MockClient((r) async => http.Response(html, 200));
+    await AcademicCalendarService(online).load(force: true);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('academic_calendar_html'), isNull);
+    expect(decodeAcademicYears(prefs.getString('academic_calendar_json')!), hasLength(3));
   });
 
   test('finds the next week matching a condition', () {
