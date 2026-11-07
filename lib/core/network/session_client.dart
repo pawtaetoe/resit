@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -9,17 +10,57 @@ void debugLog(String message) {
   if (kDebugMode) debugPrint(message);
 }
 
+/// A redirect [SessionClient] refused to follow: to a non-https address, or
+/// a 307/308 that would resend the request body to another origin.
+class UnsafeRedirectException implements Exception {
+  final String message;
+  UnsafeRedirectException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+/// Holds a per-zone request timeout set by [SessionClient.withTimeout]
+/// (wrapped so that "no timeout" can be told apart from "not set").
+class _TimeoutSetting {
+  final Duration? timeout;
+  const _TimeoutSetting(this.timeout);
+}
+
 class SessionClient extends http.BaseClient {
   /// Logs cookie set/delete events (names only, never values) for debugging.
   static bool debugCookies = false;
+
+  /// How long a request may take (waiting for the response headers, and
+  /// then between chunks of the body) unless [withTimeout] says otherwise.
+  /// Without it a stalled connection would hold up everything queued behind
+  /// it forever.
+  static const Duration defaultTimeout = Duration(seconds: 30);
+
+  static final Object _timeoutKey = Object();
 
   final http.Client _inner;
   final List<_Cookie> _cookies = [];
 
   SessionClient([http.Client? inner]) : _inner = inner ?? http.Client();
 
+  /// Runs [body] with every request it makes through this client allowed
+  /// [timeout] instead of [defaultTimeout]; null means no limit at all (the
+  /// caller enforces its own). For calls that legitimately wait long, such
+  /// as ADFS holding an MFA poll open until the phone approves.
+  Future<T> withTimeout<T>(Duration? timeout, Future<T> Function() body) {
+    return runZoned(body, zoneValues: {_timeoutKey: _TimeoutSetting(timeout)});
+  }
+
+  Duration? get _currentTimeout {
+    final setting = Zone.current[_timeoutKey];
+    return setting is _TimeoutSetting ? setting.timeout : defaultTimeout;
+  }
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final timeout = _currentTimeout;
+    final deadline = timeout == null ? null : DateTime.now().add(timeout);
     http.BaseRequest currentRequest = request;
     int redirectCount = 0;
 
@@ -29,10 +70,17 @@ class SessionClient extends http.BaseClient {
       currentRequest.headers['user-agent'] =
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 
-      final response = await _inner.send(currentRequest);
+      final host = currentRequest.url.host;
+      final pending = _inner.send(currentRequest);
+      final response = deadline == null
+          ? await pending
+          : await pending.timeout(
+              _remaining(deadline),
+              onTimeout: () => throw TimeoutException('No response from $host in time.', timeout),
+            );
       if (debugCookies) {
         final loc = response.headers['location'];
-        debugLog('Hop: ${currentRequest.method} ${currentRequest.url.host}${currentRequest.url.path} '
+        debugLog('Hop: ${currentRequest.method} $host${currentRequest.url.path} '
             '-> ${response.statusCode}'
             '${loc != null ? " Location: ${_describeLocation(currentRequest.url, loc)}" : ""}');
       }
@@ -51,8 +99,6 @@ class SessionClient extends http.BaseClient {
         final location = response.headers['location']!;
         final newUri = currentRequest.url.resolve(location);
 
-        await response.stream.drain();
-
         String newMethod = currentRequest.method;
         if ((response.statusCode == 301 ||
                 response.statusCode == 302 ||
@@ -60,19 +106,66 @@ class SessionClient extends http.BaseClient {
             currentRequest.method == 'POST') {
           newMethod = 'GET';
         }
+        final replaysBody = newMethod != 'GET' && newMethod != 'HEAD';
+
+        // Never leave TLS: cookies (and any resent body) would go out in the
+        // clear.
+        if (newUri.scheme != 'https') {
+          _discard(response);
+          throw UnsafeRedirectException(
+              'Refused a redirect from $host to an insecure ${newUri.scheme}: address.');
+        }
+        // 307/308 resend the method *and body*: only ever to the same origin,
+        // so a form (e.g. credentials) can't be bounced to another site.
+        if (replaysBody && _origin(newUri) != _origin(currentRequest.url)) {
+          _discard(response);
+          throw UnsafeRedirectException('Refused to resend a ${currentRequest.method} from $host to '
+              '${newUri.host} (${response.statusCode} redirect).');
+        }
+
+        await response.stream.drain<void>();
 
         final next = http.Request(newMethod, newUri);
-        // 307/308 must replay the same method *and body*.
-        if (newMethod != 'GET' && currentRequest is http.Request) {
+        if (replaysBody && currentRequest is http.Request) {
           next.bodyBytes = currentRequest.bodyBytes;
           final contentType = currentRequest.headers['content-type'];
           if (contentType != null) next.headers['content-type'] = contentType;
         }
         currentRequest = next;
       } else {
-        return response;
+        return timeout == null ? response : _withBodyTimeout(response, timeout);
       }
     }
+  }
+
+  static void _discard(http.StreamedResponse response) {
+    unawaited(response.stream.drain<void>().catchError((_) {}));
+  }
+
+  static Duration _remaining(DateTime deadline) {
+    final left = deadline.difference(DateTime.now());
+    return left.isNegative ? Duration.zero : left;
+  }
+
+  static String _origin(Uri uri) => '${uri.scheme}://${uri.host.toLowerCase()}:${uri.port}';
+
+  /// [response] with its body failing with a [TimeoutException] if it
+  /// stalls for longer than [timeout] between chunks.
+  static http.StreamedResponse _withBodyTimeout(http.StreamedResponse response, Duration timeout) {
+    final stream = response.stream.timeout(timeout, onTimeout: (sink) {
+      sink.addError(TimeoutException('The response from ${response.request?.url.host} stalled.', timeout));
+      sink.close();
+    });
+    return http.StreamedResponse(
+      stream,
+      response.statusCode,
+      contentLength: response.contentLength,
+      request: response.request,
+      headers: response.headers,
+      isRedirect: response.isRedirect,
+      persistentConnection: response.persistentConnection,
+      reasonPhrase: response.reasonPhrase,
+    );
   }
 
   /// Path plus query parameter *names* of a redirect target, for logging.
@@ -85,8 +178,9 @@ class SessionClient extends http.BaseClient {
   void _attachCookies(http.BaseRequest request) {
     final host = request.url.host;
     final path = request.url.path.isEmpty ? '/' : request.url.path;
-    final validCookies =
-        _cookies.where((cookie) => !cookie.isExpired && cookie.matches(host, path));
+    final secure = request.url.scheme == 'https';
+    final validCookies = _cookies.where(
+        (cookie) => !cookie.isExpired && cookie.matches(host, path) && (secure || !cookie.secure));
 
     if (validCookies.isNotEmpty) {
       request.headers['cookie'] = validCookies
@@ -102,10 +196,19 @@ class SessionClient extends http.BaseClient {
     return lastSlash == 0 ? '/' : requestPath.substring(0, lastSlash);
   }
 
+  /// RFC 6265 5.1.3 domain-match: [host] is [domain] or a subdomain of it,
+  /// and not an IP address.
+  static bool _domainMatches(String host, String domain) {
+    if (host == domain) return true;
+    final isIp = RegExp(r'^[\d.]+$').hasMatch(host) || host.contains(':');
+    return !isIp && host.endsWith('.$domain');
+  }
+
   void _updateCookies(Map<String, String> headers, Uri requestUrl) {
     final rawCookie = headers['set-cookie'];
     if (rawCookie == null) return;
-    final host = requestUrl.host;
+    final host = requestUrl.host.toLowerCase();
+    final fromSecure = requestUrl.scheme == 'https';
 
     final parts = rawCookie.split(RegExp(r',\s*(?=[^=;\s]+\=)'));
     for (var part in parts) {
@@ -119,7 +222,11 @@ class SessionClient extends http.BaseClient {
       final name = cookieKv.substring(0, eqIdx).trim();
       final value = cookieKv.substring(eqIdx + 1).trim();
 
+      // Host-only cookies are stored under the bare host; Domain cookies
+      // under ".domain" (see [_Cookie.matches]).
       var domain = host;
+      var rejected = false;
+      var secure = false;
       var path = _defaultPath(requestUrl.path);
       DateTime? expires;
       DateTime? maxAgeExpiry;
@@ -132,9 +239,20 @@ class SessionClient extends http.BaseClient {
         final attrValue = attrEq == -1 ? '' : attr.substring(attrEq + 1).trim();
 
         if (attrName == 'domain' && attrValue.isNotEmpty) {
-          domain = attrValue;
-        } else if (attrName == 'path' && attrValue.isNotEmpty) {
+          // RFC 6265 5.2.3 and 5.3 step 6: a leading dot is ignored, and a
+          // Domain the request host doesn't domain-match (another site, or a
+          // bare TLD) means the whole cookie is ignored.
+          var d = attrValue.toLowerCase();
+          if (d.startsWith('.')) d = d.substring(1);
+          if (d.isEmpty || !d.contains('.') || !_domainMatches(host, d)) {
+            rejected = true;
+          } else {
+            domain = '.$d';
+          }
+        } else if (attrName == 'path' && attrValue.startsWith('/')) {
           path = attrValue;
+        } else if (attrName == 'secure') {
+          secure = true;
         } else if (attrName == 'expires' && attrValue.isNotEmpty) {
           expires = _parseCookieDate(attrValue);
         } else if (attrName == 'max-age') {
@@ -143,6 +261,13 @@ class SessionClient extends http.BaseClient {
             maxAgeExpiry = DateTime.now().toUtc().add(Duration(seconds: seconds));
           }
         }
+      }
+
+      // Only a secure origin may set (or replace) a Secure cookie.
+      if (secure && !fromSecure) rejected = true;
+      if (rejected) {
+        if (debugCookies) debugLog('Cookie $host: IGNORED $name (domain/secure attributes not allowed)');
+        continue;
       }
 
       // Max-Age wins over Expires.
@@ -154,11 +279,11 @@ class SessionClient extends http.BaseClient {
       // ADFS sends new MSISAuth cookies and clears old ones in one response.
       _cookies.removeWhere((cookie) =>
           cookie.name == name && cookie.domain == domain && cookie.path == path);
-      final cookie = _Cookie(name, value, domain, path, effectiveExpiry);
+      final cookie = _Cookie(name, value, domain, path, effectiveExpiry, secure);
       final isDelete = value.isEmpty || value.toLowerCase() == 'deleted' || cookie.isExpired;
       if (debugCookies) {
         debugLog('Cookie $host: ${isDelete ? "DELETE" : "SET"} $name '
-            'domain=$domain path=$path expires=$effectiveExpiry');
+            'domain=$domain path=$path secure=$secure expires=$effectiveExpiry');
       }
       if (!isDelete) _cookies.add(cookie);
     }
@@ -177,8 +302,9 @@ class SessionClient extends http.BaseClient {
   /// Names (never values) of the live cookies that would be sent to [url].
   List<String> cookieNamesFor(Uri url) {
     final path = url.path.isEmpty ? '/' : url.path;
+    final secure = url.scheme == 'https';
     return _cookies
-        .where((c) => !c.isExpired && c.matches(url.host, path))
+        .where((c) => !c.isExpired && c.matches(url.host, path) && (secure || !c.secure))
         .map((c) => c.name)
         .toList();
   }
@@ -219,7 +345,10 @@ class _Cookie {
   final String path;
   final DateTime? expires;
 
-  _Cookie(this.name, this.value, this.domain, this.path, [this.expires]);
+  /// Only sent over https.
+  final bool secure;
+
+  _Cookie(this.name, this.value, this.domain, this.path, [this.expires, this.secure = false]);
 
   bool get isExpired => expires != null && expires!.isBefore(DateTime.now().toUtc());
 
@@ -229,8 +358,10 @@ class _Cookie {
         'domain': domain,
         'path': path,
         'expires': expires?.millisecondsSinceEpoch,
+        if (secure) 'secure': true,
       };
 
+  /// Also reads jars saved before `secure` existed (it defaults to false).
   factory _Cookie.fromJson(Map<String, dynamic> json) {
     final exp = json['expires'] as int?;
     return _Cookie(
@@ -239,6 +370,7 @@ class _Cookie {
       json['domain'] as String,
       json['path'] as String,
       exp == null ? null : DateTime.fromMillisecondsSinceEpoch(exp, isUtc: true),
+      json['secure'] == true,
     );
   }
 
