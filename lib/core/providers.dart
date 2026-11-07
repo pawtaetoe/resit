@@ -11,6 +11,7 @@ import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
+import 'package:resit/features/lms/data/lms_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
 
@@ -150,6 +151,19 @@ final savedUpcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) {
 final upcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) async {
   if (!ref.watch(authStateProvider)) return ref.watch(upcomingClassesServiceProvider).saved();
   return ref.watch(upcomingClassesServiceProvider).load();
+});
+
+final lmsServiceProvider = Provider<LmsService>((ref) => LmsService(ref.watch(authServiceProvider)));
+
+/// How far through a course's content (by xSiTe course id) the user is. Kept
+/// until the course list is refreshed.
+final lmsProgressProvider = FutureProvider.family<CourseProgress, String>((ref, orgUnitId) {
+  return ref.watch(lmsServiceProvider).progress(orgUnitId);
+});
+
+/// A course's content (by xSiTe course id), folder by folder.
+final lmsContentsProvider = FutureProvider.family<List<ContentModule>, String>((ref, orgUnitId) {
+  return ref.watch(lmsServiceProvider).contents(orgUnitId);
 });
 
 final academicRecordServiceProvider = Provider<AcademicRecordService>((ref) {
