@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/ui/app_theme.dart';
 
 const _offline = "Can't reach SIT's servers. Check your internet connection and try again.";
@@ -37,6 +38,10 @@ String friendlyError(Object error) {
   if (error is SessionExpiredException) {
     return "You're signed out of SIT's systems and the app couldn't sign you back in. "
         'Check your details in Account, then try again.';
+  }
+  if (error is SignInCancelledException) return 'Sign-in cancelled.';
+  if (error is UntrustedHostException || error is UnsafeRedirectException) {
+    return "SIT's sign-in sent the app somewhere it doesn't trust, so it stopped. Try again later.";
   }
   if (error is SocketException || error is HandshakeException || error is HttpException) return _offline;
   if (error is TimeoutException) return 'SIT took too long to respond. Try again in a moment.';

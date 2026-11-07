@@ -122,14 +122,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Scaffold(
       // While signing in for the first time (or changing the saved login) the
       // main action stays pinned above the tabs, within thumb reach.
-      bottomNavigationBar: showForm
+      bottomNavigationBar: showForm || (_busy && challenge != null)
           ? ThumbBar(
-              child: BusyButton(
-                onPressed: _signIn,
-                busy: _busy,
-                icon: Icons.login,
-                label: _editing ? 'Save and sign in' : 'Sign in',
-                busyLabel: challenge != null && !challenge.automatic ? 'Waiting for approval…' : 'Signing in…',
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: BusyButton(
+                      onPressed: _signIn,
+                      busy: _busy,
+                      icon: Icons.login,
+                      label: _editing ? 'Save and sign in' : 'Sign in',
+                      busyLabel: challenge != null && !challenge.automatic ? 'Waiting for approval…' : 'Signing in…',
+                    ),
+                  ),
+                  // A sign-in can wait up to 2 minutes for approval: let it be stopped.
+                  if (_busy) ...[
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () => ref.read(sessionControllerProvider.notifier).cancelSignIn(),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ],
               ),
             )
           : null,

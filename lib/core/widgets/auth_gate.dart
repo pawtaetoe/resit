@@ -68,6 +68,11 @@ class _AuthGateState extends ConsumerState<AuthGate> {
           child: MfaCard(challenge: session.challenge!),
         ),
       );
+      action = OutlinedButton.icon(
+        onPressed: () => ref.read(sessionControllerProvider.notifier).cancelSignIn(),
+        icon: const Icon(Icons.close),
+        label: const Text('Cancel sign-in'),
+      );
     } else if (session.busy || session.phase == SessionPhase.idle) {
       body = MessageView(
         icon: Icons.sync,
