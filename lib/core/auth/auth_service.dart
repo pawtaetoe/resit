@@ -544,8 +544,13 @@ class AuthService {
   /// saved credentials are submitted (with MFA via [onMfaChallenge]) and the
   /// result replayed. If that is not possible the ADFS page is returned as-is,
   /// so callers should check where they ended up.
+  ///
+  /// [thenGet] is fetched after signing in instead of [url], for apps whose
+  /// sign-in starts at a different address than the page wanted (xSiTe signs
+  /// in at its SAML start page, then serves the course list).
   Future<http.Response> getWithSso(
     Uri url, {
+    Uri? thenGet,
     void Function(String message)? onLog,
     void Function(MfaChallenge challenge)? onMfaChallenge,
     Duration mfaTimeout = const Duration(minutes: 2),
@@ -582,7 +587,7 @@ class AuthService {
       debugLog('SSO: replaying ADFS relay form to ${relay.action.host}${relay.action.path}');
       await client.post(relay.action, body: relay.fields);
       replayed = true;
-      response = await client.get(url);
+      response = await client.get(thenGet ?? url);
     }
     if (replayed) await _persistSession();
     return response;

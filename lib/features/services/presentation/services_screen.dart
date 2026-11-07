@@ -3,6 +3,7 @@ import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
+import 'package:resit/features/lms/presentation/courses_screen.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
@@ -47,6 +48,13 @@ class ServicesScreen extends StatelessWidget {
               title: 'Timetable',
               subtitle: 'Your weekly class schedule from in4SIT',
               onTap: () => _open(context, const TimetableScreen()),
+            ),
+            const SizedBox(height: 8),
+            _TaskTile(
+              icon: Icons.school_outlined,
+              title: 'Courses',
+              subtitle: 'Your xSiTe courses, progress and what to do next',
+              onTap: () => _open(context, const CoursesScreen()),
             ),
             const SizedBox(height: 8),
             _TaskTile(
