@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:http/http.dart' as http;
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
 
@@ -161,7 +163,14 @@ class ContentTopic {
     this.description = '',
   });
 
-  bool get isLink => type == 'Link' && (url.startsWith('https://') || url.startsWith('http://'));
+  /// A link to a web address the app may open directly: https only, so a
+  /// plain-http, javascript:, intent: or malformed address isn't opened.
+  bool get isLink => type == 'Link' && _linkUri != null;
+
+  Uri? get _linkUri {
+    final uri = Uri.tryParse(url.trim());
+    return uri != null && uri.isScheme('https') && uri.host.isNotEmpty ? uri : null;
+  }
 
   /// The file's extension in lower case ("pdf", "mp4", ...), if it's a file.
   String get extension {
@@ -170,9 +179,12 @@ class ContentTopic {
     return dot < 0 ? '' : url.substring(dot + 1).toLowerCase();
   }
 
-  /// Where to open it: a link's own address, otherwise its page on xSiTe.
-  Uri get openUrl =>
-      isLink ? Uri.parse(url) : Uri.parse('${LmsService.base}/d2l/le/content/$orgUnitId/viewContent/$id/View');
+  /// Where to open it: a link's own (https) address, otherwise its page on
+  /// xSiTe.
+  Uri get openUrl => (type == 'Link' ? _linkUri : null) ?? topicPage;
+
+  /// The topic's page on xSiTe.
+  Uri get topicPage => Uri.parse('${LmsService.base}/d2l/le/content/$orgUnitId/viewContent/$id/View');
 
   static ContentTopic? fromJson(String orgUnitId, Map<String, Object?> j) {
     if (j['IsHidden'] == true) return null;
@@ -292,12 +304,51 @@ class LmsService {
   final AuthService auth;
   final Map<String, Future<Uint8List?>> _images = {};
 
-  LmsService(this.auth);
+  /// How long the course list is reused before xSiTe is asked again.
+  static const coursesTtl = Duration(minutes: 10);
+
+  /// Requests (progress, contents, images) in flight at once, at most.
+  static const maxInFlight = 4;
+
+  final DateTime Function() _now;
+  ({DateTime at, List<LmsCourse> courses})? _courses;
+  Future<List<LmsCourse>>? _coursesInFlight;
+  late final _Limiter _limit = _Limiter(maxInFlight);
+
+  /// The xSiTe sign-in under way, shared by every request that finds xSiTe
+  /// signed out meanwhile.
+  Future<void>? _signingIn;
+
+  /// xSiTe sign-ins finished so far, to tell whether one happened while a
+  /// request was out.
+  var _signIns = 0;
+
+  LmsService(this.auth, {DateTime Function()? now}) : _now = now ?? DateTime.now;
 
   SessionClient get _client => auth.client;
 
-  /// Every course on xSiTe, signing in to xSiTe first if needed.
-  Future<List<LmsCourse>> courses({void Function(MfaChallenge)? onMfaChallenge}) async {
+  /// Every course on xSiTe, signing in to xSiTe first if needed. Reused for
+  /// [coursesTtl]; [force] asks xSiTe again.
+  Future<List<LmsCourse>> courses({void Function(MfaChallenge)? onMfaChallenge, bool force = false}) {
+    final kept = _courses;
+    if (!force && kept != null && _now().difference(kept.at) < coursesTtl) return Future.value(List.of(kept.courses));
+    if (!force && _coursesInFlight != null) return _coursesInFlight!.then(List.of);
+    final future = _fetchCourses(onMfaChallenge);
+    _coursesInFlight = future;
+    future.then((c) => _courses = (at: _now(), courses: c), onError: (_) {}).whenComplete(() {
+      if (identical(_coursesInFlight, future)) _coursesInFlight = null;
+    });
+    return future.then(List.of);
+  }
+
+  /// Forgets the course list, e.g. after signing out.
+  void clearCache() {
+    _courses = null;
+    _coursesInFlight = null;
+    _images.clear();
+  }
+
+  Future<List<LmsCourse>> _fetchCourses(void Function(MfaChallenge)? onMfaChallenge) async {
     final all = <String, LmsCourse>{};
     String? bookmark;
     // A few pages at most; stop if a page adds nothing new.
@@ -320,7 +371,7 @@ class LmsService {
     final items = <ContentItem>[];
     Uri? url = Uri.parse('$base/d2l/api/le/1.75/$orgUnitId/content/completions/mycount/?level=3');
     for (var page = 0; page < 10 && url != null; page++) {
-      final parsed = parseCompletions(await _getJson(url, onMfaChallenge));
+      final parsed = parseCompletions(await _getJson(url, onMfaChallenge, limited: true));
       items.addAll(parsed.items);
       final next = parsed.next;
       url = next == null ? null : Uri.parse(base).resolve(next);
@@ -331,19 +382,20 @@ class LmsService {
   /// The course's content, folder by folder.
   Future<List<ContentModule>> contents(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async {
     final url = Uri.parse('$base/d2l/api/le/1.75/$orgUnitId/content/toc');
-    return parseToc(orgUnitId, await _getJson(url, onMfaChallenge));
+    return parseToc(orgUnitId, await _getJson(url, onMfaChallenge, limited: true));
   }
 
-  /// The course's picture (small), or null if it has none or can't be read.
-  /// Kept for the app's lifetime.
-  Future<Uint8List?> image(LmsCourse course) {
+  /// The course's picture, about [size] pixels across (the list shows it
+  /// at 56 dp, so 168 px covers a 3× screen), or null if it has none or
+  /// can't be read. Kept for the app's lifetime.
+  Future<Uint8List?> image(LmsCourse course, {int size = 168}) {
     final path = course.imagePath;
     if (path == null) return Future.value(null);
     return _images.putIfAbsent(course.orgUnitId, () async {
       try {
         final uri = Uri.parse(base).resolve(path);
-        final sized = uri.replace(queryParameters: {...uri.queryParameters, 'width': '480', 'height': '180'});
-        final resp = await _client.get(sized);
+        final sized = uri.replace(queryParameters: {...uri.queryParameters, 'width': '$size', 'height': '$size'});
+        final resp = await _limit(() => _client.get(sized));
         final type = resp.headers['content-type'] ?? '';
         if (resp.statusCode != 200 || !type.startsWith('image/')) return null;
         return resp.bodyBytes;
@@ -354,14 +406,41 @@ class LmsService {
   }
 
   /// GETs an xSiTe API; if xSiTe isn't signed in yet (it answers with its
-  /// login page instead of JSON), signs in through ADFS and asks again.
-  Future<String> _getJson(Uri url, void Function(MfaChallenge)? onMfaChallenge) async {
-    var resp = await _client.get(url);
-    if (_isJson(resp.statusCode, resp.headers, resp.body)) return resp.body;
+  /// login page instead of JSON), signs in through ADFS and asks again. When
+  /// several requests find xSiTe signed out at once, one signs in and the
+  /// others wait for it, then ask again. [limited] requests take turns
+  /// within [maxInFlight].
+  Future<String> _getJson(Uri url, void Function(MfaChallenge)? onMfaChallenge, {bool limited = false}) async {
+    Future<http.Response> get() => limited ? _limit(() => _client.get(url)) : _client.get(url);
 
-    debugLog('xSiTe: not signed in (status ${resp.statusCode}, at ${resp.request?.url.path}); signing in');
-    resp = await auth.getWithSso(samlLogin, thenGet: url, onMfaChallenge: onMfaChallenge);
-    if (_isJson(resp.statusCode, resp.headers, resp.body)) return resp.body;
+    final signInsBefore = _signIns;
+    var resp = await get();
+    var body = resp.body;
+    if (_isJson(resp.statusCode, resp.headers, body)) return body;
+
+    final pending = _signingIn;
+    if (pending != null || _signIns != signInsBefore) {
+      // Someone else is signing in, or did while this was out: wait for
+      // them, then ask again.
+      await pending;
+      resp = await get();
+      body = resp.body;
+      if (_isJson(resp.statusCode, resp.headers, body)) return body;
+    } else {
+      debugLog('xSiTe: not signed in (status ${resp.statusCode}, at ${resp.request?.url.path}); signing in');
+      // Waiters only need to know it's over; this request reports any error.
+      final done = Completer<void>();
+      _signingIn = done.future;
+      try {
+        resp = await auth.getWithSso(samlLogin, thenGet: url, onMfaChallenge: onMfaChallenge);
+      } finally {
+        _signingIn = null;
+        _signIns++;
+        done.complete();
+      }
+      body = resp.body;
+      if (_isJson(resp.statusCode, resp.headers, body)) return body;
+    }
 
     final landed = resp.request?.url;
     throw SessionExpiredException(
@@ -373,5 +452,34 @@ class LmsService {
     final type = headers['content-type'] ?? '';
     final t = _stripGuard(body);
     return type.contains('json') || t.startsWith('{') || t.startsWith('[');
+  }
+}
+
+/// Lets at most [max] tasks run at once; the rest wait their turn.
+class _Limiter {
+  final int max;
+  var _running = 0;
+  final _waiting = Queue<Completer<void>>();
+
+  _Limiter(this.max);
+
+  Future<T> call<T>(Future<T> Function() task) async {
+    if (_running >= max) {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future;
+    } else {
+      _running++;
+    }
+    try {
+      return await task();
+    } finally {
+      // Hand the slot straight to the next in line, or free it.
+      if (_waiting.isNotEmpty) {
+        _waiting.removeFirst().complete();
+      } else {
+        _running--;
+      }
+    }
   }
 }
