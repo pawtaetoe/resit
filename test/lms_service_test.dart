@@ -187,4 +187,97 @@ void main() {
     expect(signedIn, isTrue);
     expect(courses.map((c) => c.courseCode), ['INF2004', 'CSC2101', 'USI2001']);
   });
+
+  group('requests', () {
+    late bool signedIn;
+    late int samlLogins;
+    late int courseLists;
+    late int inFlight;
+    late int maxInFlight;
+    late LmsService service;
+    late DateTime now;
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      FlutterSecureStorage.setMockInitialValues({});
+      SharedPreferences.setMockInitialValues({});
+      signedIn = false;
+      samlLogins = 0;
+      courseLists = 0;
+      inFlight = 0;
+      maxInFlight = 0;
+      now = DateTime(2026, 11, 7, 9);
+      final adfs = Uri.parse('https://fs.singaporetech.edu.sg/adfs/ls/?SAMLRequest=abc');
+      final mock = MockClient((request) async {
+        final url = request.url;
+        if (url.path == '/d2l/lp/auth/saml/login') {
+          samlLogins++;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return http.Response(
+              "<form method='post' action='https://xsite.singaporetech.edu.sg/d2l/lp/auth/login/samlLogin.d2l'>"
+              "<input name='SAMLResponse' value='xyz'><input name='RelayState' value='/d2l/home'></form>",
+              200,
+              request: http.Request('GET', adfs));
+        }
+        if (request.method == 'POST' && url.path == '/d2l/lp/auth/login/samlLogin.d2l') {
+          signedIn = true;
+          return http.Response('', 200, request: request);
+        }
+        if (!signedIn) {
+          return http.Response('<html>Login</html>', 200,
+              request: http.Request('GET', Uri.parse('https://xsite.singaporetech.edu.sg/d2l/loginh/')));
+        }
+        inFlight++;
+        if (inFlight > maxInFlight) maxInFlight = inFlight;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        inFlight--;
+        if (url.path == '/d2l/le/manageCourses/api/mycourses') {
+          courseLists++;
+          return http.Response(_myCourses, 200, headers: {'content-type': 'application/json'}, request: request);
+        }
+        if (url.path.endsWith('/content/completions/mycount/')) {
+          return http.Response(_completions, 200, headers: {'content-type': 'application/json'}, request: request);
+        }
+        return http.Response('not found', 404, request: request);
+      });
+      service = LmsService(AuthService(SessionClient(mock), SecureStorage()), now: () => now);
+    });
+
+    test('requests that find xSiTe signed out together sign in once', () async {
+      final all = await Future.wait([for (var i = 0; i < 6; i++) service.progress('21344$i')]);
+      expect(all.every((p) => p.required == 4), isTrue);
+      expect(samlLogins, 1);
+    });
+
+    test('at most four requests are out at once', () async {
+      signedIn = true;
+      await Future.wait([for (var i = 0; i < 10; i++) service.progress('$i')]);
+      expect(maxInFlight, LmsService.maxInFlight);
+    });
+
+    test('the course list is kept for ten minutes; force asks again', () async {
+      signedIn = true;
+      final both = await Future.wait([service.courses(), service.courses()]);
+      expect(both.first, hasLength(3));
+      expect(courseLists, 1, reason: 'shared while under way');
+      await service.courses();
+      expect(courseLists, 1);
+      await service.courses(force: true);
+      expect(courseLists, 2);
+      now = now.add(const Duration(minutes: 11));
+      await service.courses();
+      expect(courseLists, 3);
+    });
+  });
+
+  test('only https links open directly; others open on xSiTe', () {
+    ContentTopic link(String url) => ContentTopic(orgUnitId: '1', id: 7, title: 't', type: 'Link', url: url);
+    const page = 'https://xsite.singaporetech.edu.sg/d2l/le/content/1/viewContent/7/View';
+    expect(link('https://example.com/a').isLink, isTrue);
+    expect(link('https://example.com/a').openUrl.toString(), 'https://example.com/a');
+    for (final url in ['http://example.com', 'javascript:alert(1)', 'intent://x', 'https://[::1', '']) {
+      expect(link(url).isLink, isFalse, reason: url);
+      expect(link(url).openUrl.toString(), page, reason: url);
+    }
+  });
 }

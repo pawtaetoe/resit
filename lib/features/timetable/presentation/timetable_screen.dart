@@ -7,16 +7,43 @@ import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
+import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
-class TimetableScreen extends ConsumerStatefulWidget {
-  const TimetableScreen({super.key});
+/// The weekly class timetable from in4SIT. Opens at the week of
+/// [initialDate] (this week by default). Signs in first if needed.
+class TimetableScreen extends StatelessWidget {
+  final DateTime? initialDate;
+  const TimetableScreen({super.key, this.initialDate});
 
   @override
-  ConsumerState<TimetableScreen> createState() => _TimetableScreenState();
+  Widget build(BuildContext context) =>
+      AuthGate(title: 'Timetable', builder: (_) => _Timetable(initialDate: initialDate));
 }
+
+class _Timetable extends ConsumerStatefulWidget {
+  final DateTime? initialDate;
+  const _Timetable({this.initialDate});
+
+  @override
+  ConsumerState<_Timetable> createState() => _TimetableScreenState();
+}
+
+/// Course colours: eight hues that sit with the logo's navy and teal, all
+/// dark enough for white text (at least 5.9:1). A course keeps its colour.
+const _courseColors = [
+  Color(0xFF2B5DA8), // blue
+  Color(0xFF0B6E78), // teal
+  Color(0xFF2E7048), // green
+  Color(0xFF6447A8), // purple
+  Color(0xFF963A6A), // plum
+  Color(0xFF9A4A0C), // amber
+  Color(0xFF45607A), // slate
+  Color(0xFF3B47A0), // indigo
+];
 
 class _PlacedSession {
   final ClassSession session;
@@ -26,15 +53,30 @@ class _PlacedSession {
   _PlacedSession(this.session, this.lane, this.laneCount);
 }
 
-class _TimetableScreenState extends ConsumerState<TimetableScreen> {
+class _TimetableScreenState extends ConsumerState<_Timetable> {
   // The week pager is "infinite": page 1000 is the current week.
   static const _initialPage = 1000;
-  static const _timeColumnWidth = 40.0;
-  static const _hourHeight = 60.0;
+  static const _timeColumnWidth = 44.0;
   static const _dayCount = 5; // Monday to Friday
 
-  final _pageController = PageController(initialPage: _initialPage);
-  int _page = _initialPage;
+  /// An hour's height: grows with the user's text size, so class text fits.
+  double get _hourHeight => MediaQuery.textScalerOf(context).scale(60).clamp(60.0, 132.0);
+
+  late final PageController _pageController;
+  late int _page;
+
+  @override
+  void initState() {
+    super.initState();
+    _page = _initialPage;
+    if (widget.initialDate case final date?) {
+      final now = DateTime.now();
+      final thisMonday = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+      final monday = DateTime(date.year, date.month, date.day - (date.weekday - 1));
+      _page = _initialPage + (monday.difference(thisMonday).inHours / (24 * 7)).round();
+    }
+    _pageController = PageController(initialPage: _page);
+  }
 
   // Weeks are fetched one at a time (the server keeps the page state) and
   // cached by their Monday.
@@ -69,17 +111,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
 
     try {
       if (force) service.reset();
-      WeekSchedule week;
-      try {
-        week = await fetch();
-      } on SessionExpiredException {
-        // in4SIT's sign-in failed: sign in afresh automatically, then retry
-        // once, instead of asking the user to do it.
-        final signedIn = await ref.read(sessionControllerProvider.notifier).ensureSignedIn(force: true);
-        if (!signedIn) rethrow;
-        service.reset();
-        week = await fetch();
-      }
+      final week = await withSignInRetry(ref, fetch, beforeRetry: service.reset);
       if (!mounted) return;
       setState(() => _weeks[monday] = week);
     } catch (e) {
@@ -117,20 +149,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
     );
   }
 
-  Color _courseColor(String code) {
-    final colors = Colors.primaries;
-    return colors[code.hashCode.abs() % colors.length].shade700;
-  }
-
-  /// White or black, whichever reads better on [background]. On every course
-  /// colour this gives at least 4.5:1 contrast (WCAG AA), in light and dark
-  /// mode alike.
-  static Color _textOn(Color background) {
-    final l = background.computeLuminance();
-    final onWhite = 1.05 / (l + 0.05);
-    final onBlack = (l + 0.05) / 0.05;
-    return onWhite >= onBlack ? Colors.white : Colors.black;
-  }
+  Color _courseColor(String code) => _courseColors[code.hashCode.abs() % _courseColors.length];
 
   /// Lays out one day's sessions side by side where they overlap in time.
   List<_PlacedSession> _layoutDay(List<ClassSession> sessions) {
@@ -183,9 +202,8 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(s.courseCode, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const SizedBox(height: 12),
+              Text(s.courseCode, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
               _detailRow(Icons.class_outlined, '${s.component} · ${s.section}'),
               _detailRow(Icons.calendar_today_outlined, DateFormat('EEEE, d MMM yyyy').format(s.date)),
               _detailRow(Icons.schedule, s.timeLabel),
@@ -224,11 +242,14 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
     final maxEnd = sessions.map((s) => s.endMin).fold<int>(18 * 60, (a, b) => a > b ? a : b);
     final startHour = minStart ~/ 60;
     final endHour = (maxEnd + 59) ~/ 60;
-    final gridHeight = (endHour - startHour) * _hourHeight;
+    final hourHeight = _hourHeight;
+    final gridHeight = (endHour - startHour) * hourHeight;
 
     return LayoutBuilder(builder: (context, constraints) {
       final colWidth = (constraints.maxWidth - _timeColumnWidth) / _dayCount;
-      final scheme = Theme.of(context).colorScheme;
+      final theme = Theme.of(context);
+      final scheme = theme.colorScheme;
+      final small = theme.textTheme.labelSmall;
       final muted = scheme.onSurfaceVariant;
       final nowDate = DateTime(today.year, today.month, today.day);
       final todayIndex = nowDate.difference(monday).inDays;
@@ -246,23 +267,20 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                 width: colWidth,
                 child: Column(
                   children: [
-                    Text(DateFormat('E').format(date),
-                        style: TextStyle(fontSize: 11, color: isToday ? scheme.primary : muted)),
+                    Text(DateFormat('E').format(date), style: small?.copyWith(color: isToday ? scheme.primary : muted)),
                     const SizedBox(height: 2),
                     CircleAvatar(
                       radius: 13,
                       backgroundColor: isToday ? scheme.primary : Colors.transparent,
                       child: Text(
                         '${date.day}',
-                        style: TextStyle(
-                          fontSize: 13,
+                        style: theme.textTheme.labelLarge?.copyWith(
                           fontWeight: FontWeight.bold,
-                          color: isToday ? scheme.onPrimary : null,
+                          color: isToday ? scheme.onPrimary : scheme.onSurface,
                         ),
                       ),
                     ),
-                    if (date.day == 1 || d == 0)
-                      Text(DateFormat('MMM').format(date), style: TextStyle(fontSize: 10, color: muted)),
+                    if (date.day == 1 || d == 0) Text(DateFormat('MMM').format(date), style: small?.copyWith(color: muted)),
                   ],
                 ),
               );
@@ -276,7 +294,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
           children: [
             for (var h = startHour; h <= endHour; h++)
               Positioned(
-                top: (h - startHour) * _hourHeight,
+                top: (h - startHour) * hourHeight,
                 left: 0,
                 right: 0,
                 child: Row(
@@ -288,7 +306,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                         child: Text(
                           '${h.toString().padLeft(2, '0')}:00',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 10, color: muted),
+                          style: small?.copyWith(color: muted),
                         ),
                       ),
                     ),
@@ -310,34 +328,39 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
                     final s = placed.session;
                     final laneWidth = colWidth / placed.laneCount;
                     final color = _courseColor(s.courseCode);
+                    // At least 40 px tall, so a short class is still easy to tap.
+                    final height = ((s.endMin - s.startMin) / 60 * hourHeight - 2).clamp(40.0, double.infinity);
                     return Positioned(
                       left: _timeColumnWidth + d * colWidth + placed.lane * laneWidth + 1,
-                      top: (s.startMin - startHour * 60) / 60 * _hourHeight + 1,
+                      top: (s.startMin - startHour * 60) / 60 * hourHeight + 1,
                       width: laneWidth - 2,
-                      height: (s.endMin - s.startMin) / 60 * _hourHeight - 2,
-                      child: GestureDetector(
+                      height: height,
+                      // One node for screen readers, with the tap on it.
+                      child: Semantics(
+                        button: true,
+                        label: '${s.courseCode} ${s.component}, ${s.timeLabel}, ${s.location}'
+                            '${s.coinciding ? ', clashes with another class' : ''}',
+                        excludeSemantics: true,
                         onTap: () => _showDetails(s),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: color,
-                            borderRadius: BorderRadius.circular(4),
-                            border: s.coinciding ? Border.all(color: Colors.orangeAccent, width: 1.5) : null,
-                          ),
-                          child: Semantics(
-                            button: true,
-                            label: '${s.courseCode} ${s.component}, ${s.timeLabel}, ${s.location}',
-                            excludeSemantics: true,
+                        child: GestureDetector(
+                          excludeFromSemantics: true,
+                          onTap: () => _showDetails(s),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(6),
+                              // A clash shows as an orange outline and a warning sign.
+                              border: s.coinciding ? Border.all(color: scheme.tertiary, width: 2) : null,
+                            ),
                             child: Text.rich(
                               TextSpan(children: [
-                                TextSpan(
-                                  text: '${s.courseCode}\n',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10),
-                                ),
+                                if (s.coinciding) const TextSpan(text: '⚠ '),
+                                TextSpan(text: '${s.courseCode}\n', style: const TextStyle(fontWeight: FontWeight.bold)),
                                 TextSpan(text: '${s.component}\n${s.location}'),
                               ]),
                               overflow: TextOverflow.clip,
-                              style: TextStyle(color: _textOn(color), fontSize: 9, height: 1.2),
+                              style: small?.copyWith(color: Colors.white, height: 1.2, letterSpacing: 0),
                             ),
                           ),
                         ),
@@ -349,7 +372,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
               Positioned(
                 left: _timeColumnWidth + todayIndex * colWidth - 4,
                 width: colWidth + 4,
-                top: (nowMin - startHour * 60) / 60 * _hourHeight - 4,
+                top: (nowMin - startHour * 60) / 60 * hourHeight - 4,
                 child: IgnorePointer(
                   child: Row(
                     children: [
@@ -367,7 +390,25 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
         children: [
           Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: header),
           const Divider(height: 1),
-          Expanded(child: SingleChildScrollView(child: grid)),
+          Expanded(
+            child: Stack(
+              children: [
+                // Room at the top so the first hour's label isn't clipped.
+                SingleChildScrollView(padding: const EdgeInsets.only(top: 10, bottom: 8), child: grid),
+                if (week != null && week.sessions.isEmpty)
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.free_breakfast_outlined, color: muted, size: 32),
+                        const SizedBox(height: 8),
+                        Text('No classes this week', style: theme.textTheme.titleSmall?.copyWith(color: muted)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       );
     });
@@ -408,7 +449,7 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
       return MessageView(
         icon: session ? Icons.lock_clock : Icons.cloud_off,
         tone: Tone.danger,
-        title: session ? "Couldn't sign in to in4SIT" : "Couldn't load this week",
+        title: "Couldn't load this week",
         message: friendlyError(error),
         detail: errorDetail(error),
         action: retry,
@@ -417,13 +458,8 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
 
     return Column(
       children: [
-        SizedBox(height: 3, child: loading ? const LinearProgressIndicator() : null),
+        RefreshStrip(active: loading),
         Expanded(child: _buildGrid(monday, week)),
-        if (week != null && week.sessions.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: StatusPill(label: 'No classes this week', tone: Tone.neutral, icon: Icons.free_breakfast_outlined),
-          ),
       ],
     );
   }
@@ -433,49 +469,37 @@ class _TimetableScreenState extends ConsumerState<TimetableScreen> {
     final monday = _weekStart(_page);
     final thisWeek = _page == _initialPage;
     final loading = _loadingWeeks.contains(monday);
-    final navStyle = IconButton.styleFrom(minimumSize: const Size(48, 52));
 
     return Scaffold(
       appBar: thumbAppBar(
         'Timetable',
-        subtitle: Text(
-          [
-            if (thisWeek) 'This week',
-            // The academic week for the shown week, from SIT's calendar.
-            if (ref.watch(academicCalendarProvider).valueOrNull?.positionOf(monday) case final p?)
-              'Week ${p.week.number}${p.week.phase == WeekPhase.study ? '' : ' (${phaseLabel(p.week.phase).toLowerCase()})'}',
-            _weekLabel(monday),
-          ].join(' · '),
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        subtitle: [
+          if (thisWeek) 'This week',
+          // The academic week for the shown week, from SIT's calendar.
+          if (ref.watch(academicCalendarProvider).valueOrNull?.positionOf(monday) case final p?)
+            'Week ${p.week.number}${p.week.phase == WeekPhase.study ? '' : ' (${phaseLabel(p.week.phase).toLowerCase()})'}',
+          _weekLabel(monday),
+        ].join(' · '),
       ),
       // Week navigation sits under the thumb; swiping left/right works too.
       bottomNavigationBar: ThumbBar(
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            IconButton(
-              style: navStyle,
-              tooltip: 'Previous week',
-              icon: const Icon(Icons.chevron_left),
-              onPressed: () => _goToPage(_page - 1),
-            ),
+            ThumbIconButton(tooltip: 'Previous week', icon: Icons.chevron_left, onPressed: () => _goToPage(_page - 1)),
+            const SizedBox(width: 8),
             Expanded(
-              child: TextButton(
-                style: TextButton.styleFrom(minimumSize: const Size(0, 52)),
+              child: FilledButton.tonal(
                 onPressed: thisWeek ? null : () => _goToPage(_initialPage),
                 child: Text(thisWeek ? 'This week' : 'Back to this week', overflow: TextOverflow.ellipsis),
               ),
             ),
-            IconButton(
-              style: navStyle,
-              tooltip: 'Next week',
-              icon: const Icon(Icons.chevron_right),
-              onPressed: () => _goToPage(_page + 1),
-            ),
-            IconButton(
-              style: navStyle,
+            const SizedBox(width: 8),
+            ThumbIconButton(tooltip: 'Next week', icon: Icons.chevron_right, onPressed: () => _goToPage(_page + 1)),
+            const SizedBox(width: 8),
+            ThumbIconButton(
               tooltip: 'Refresh',
-              icon: const Icon(Icons.refresh),
+              icon: Icons.refresh,
               onPressed: loading ? null : () => _loadWeek(monday, force: true),
             ),
           ],

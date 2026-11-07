@@ -8,6 +8,8 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
+import 'package:resit/core/widgets/panels.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
@@ -31,14 +33,21 @@ String _ago(DateTime when, DateTime now) {
 
 /// Courses on xSiTe (SIT's LMS): this term's first, each with how much of
 /// its content is done. A course opens its to-do list.
-class CoursesScreen extends ConsumerStatefulWidget {
+class CoursesScreen extends StatelessWidget {
   const CoursesScreen({super.key});
 
   @override
-  ConsumerState<CoursesScreen> createState() => _CoursesScreenState();
+  Widget build(BuildContext context) => AuthGate(title: 'xSiTe courses', builder: (_) => const _Courses());
 }
 
-class _CoursesScreenState extends ConsumerState<CoursesScreen> {
+class _Courses extends ConsumerStatefulWidget {
+  const _Courses();
+
+  @override
+  ConsumerState<_Courses> createState() => _CoursesScreenState();
+}
+
+class _CoursesScreenState extends ConsumerState<_Courses> {
   List<LmsCourse>? _courses;
   Object? _error;
   bool _loading = false;
@@ -56,19 +65,11 @@ class _CoursesScreenState extends ConsumerState<CoursesScreen> {
       _error = null;
     });
     final service = ref.read(lmsServiceProvider);
-    Future<List<LmsCourse>> fetch() => service.courses(onMfaChallenge: (c) {
+    Future<List<LmsCourse>> fetch() => service.courses(force: refresh, onMfaChallenge: (c) {
           if (mounted) setState(() => _challenge = c);
         });
     try {
-      List<LmsCourse> courses;
-      try {
-        courses = await fetch();
-      } on SessionExpiredException {
-        // Sign in to SIT afresh automatically, then try once more.
-        final ok = await ref.read(sessionControllerProvider.notifier).ensureSignedIn(force: true);
-        if (!ok) rethrow;
-        courses = await fetch();
-      }
+      final courses = await withSignInRetry(ref, fetch);
       if (refresh) ref.invalidate(lmsProgressProvider);
       if (mounted) setState(() => _courses = courses);
     } catch (e) {
@@ -86,7 +87,7 @@ class _CoursesScreenState extends ConsumerState<CoursesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: thumbAppBar('Courses', subtitle: const Text('From xSiTe', style: TextStyle(fontSize: 13))),
+      appBar: thumbAppBar('xSiTe courses', subtitle: 'Progress and what to do next'),
       bottomNavigationBar: ThumbBar(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -99,15 +100,7 @@ class _CoursesScreenState extends ConsumerState<CoursesScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            SizedBox.square(
-              dimension: ThumbBar.heightOf(context),
-              child: IconButton.outlined(
-                tooltip: 'Refresh',
-                style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: _loading ? null : () => _load(refresh: true),
-                icon: const Icon(Icons.refresh),
-              ),
-            ),
+            ThumbIconButton(tooltip: 'Refresh', icon: Icons.refresh, onPressed: _loading ? null : () => _load(refresh: true)),
           ],
         ),
       ),
@@ -135,29 +128,15 @@ class _CoursesScreenState extends ConsumerState<CoursesScreen> {
           action: FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Try again')),
         );
       }
-      if (!ref.watch(authStateProvider) && !_loading) {
-        return MessageView(
-          icon: Icons.lock_outline,
-          title: 'Sign in to see your courses',
-          message: 'xSiTe uses your SIT account.',
-          action: FilledButton(
-            onPressed: () {
-              ref.read(homeTabProvider.notifier).state = AppTab.account;
-              Navigator.popUntil(context, (r) => r.isFirst);
-            },
-            child: const Text('Go to sign in'),
-          ),
-        );
-      }
       return const MessageView(
-        icon: Icons.school_outlined,
+        icon: Icons.menu_book_outlined,
         title: 'Opening xSiTe…',
         message: 'Signing in with your SIT account.',
         action: SizedBox(width: 160, child: LinearProgressIndicator()),
       );
     }
     if (courses.isEmpty) {
-      return const MessageView(icon: Icons.school_outlined, title: 'No courses', message: "xSiTe didn't list any.");
+      return const MessageView(icon: Icons.menu_book_outlined, title: 'No courses', message: "xSiTe didn't list any.");
     }
 
     // Grouped by term, newest first (the list is already in that order).
@@ -167,34 +146,47 @@ class _CoursesScreenState extends ConsumerState<CoursesScreen> {
     }
     final terms = groups.keys.toList();
 
-    return RefreshIndicator(
-      onRefresh: () => _load(refresh: true),
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        children: [
-          if (_loading) const LinearProgressIndicator(),
-          for (final term in terms) ...[
-            SectionLabel(term == terms.first ? '$term · this term' : term),
-            for (final c in groups[term]!)
-              Padding(padding: const EdgeInsets.only(bottom: 8), child: _CourseCard(course: c)),
-            const SizedBox(height: 12),
-          ],
-        ],
-      ),
+    return Column(
+      children: [
+        RefreshStrip(active: _loading),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => _load(refresh: true),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
+              children: [
+                for (final term in terms) ...[
+                  SectionLabel(term == terms.first ? '$term · this term' : term),
+                  for (final c in groups[term]!)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: Space.card),
+                      // Progress only for this term's courses: older ones are done
+                      // with, and checking them all costs a request each.
+                      child: _CourseCard(course: c, showProgress: term == terms.first),
+                    ),
+                  const SizedBox(height: Space.section - Space.card),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
 class _CourseCard extends ConsumerWidget {
   final LmsCourse course;
-  const _CourseCard({required this.course});
+  final bool showProgress;
+  const _CourseCard({required this.course, this.showProgress = true});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
-    final progress = ref.watch(lmsProgressProvider(course.orgUnitId));
+    final AsyncValue<CourseProgress?> progress =
+        showProgress ? ref.watch(lmsProgressProvider(course.orgUnitId)) : const AsyncData(null);
     final p = progress.valueOrNull;
     final seen = course.lastAccessed;
 
@@ -253,15 +245,17 @@ class _CourseImage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
     final placeholder = Container(
-      color: scheme.secondaryContainer,
+      color: scheme.primaryContainer,
       alignment: Alignment.center,
       child: Text(
         course.courseCode.replaceAll(RegExp(r'\d'), ''),
-        style: TextStyle(color: scheme.onSecondaryContainer, fontWeight: FontWeight.bold),
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(color: scheme.onPrimaryContainer, fontWeight: FontWeight.bold),
       ),
     );
+    // Decoded at the size it's shown, not the size it was sent.
+    final cacheSize = (size * MediaQuery.devicePixelRatioOf(context)).round();
     return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: SizedBox.square(
         dimension: size,
         child: FutureBuilder<Uint8List?>(
@@ -269,7 +263,8 @@ class _CourseImage extends ConsumerWidget {
           builder: (context, snap) {
             final bytes = snap.data;
             if (bytes == null) return placeholder;
-            return Image.memory(bytes, fit: BoxFit.cover, errorBuilder: (_, __, ___) => placeholder);
+            return Image.memory(bytes,
+                fit: BoxFit.cover, cacheWidth: cacheSize, errorBuilder: (_, __, ___) => placeholder);
           },
         ),
       ),
@@ -304,7 +299,6 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final progressAsync = ref.watch(lmsProgressProvider(course.orgUnitId));
     final contentsAsync = ref.watch(lmsContentsProvider(course.orgUnitId));
     final p = progressAsync.valueOrNull;
@@ -326,7 +320,11 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
               message: friendlyError(error),
               action: FilledButton.icon(onPressed: _refresh, icon: const Icon(Icons.refresh), label: const Text('Try again')),
             )
-          : const Center(child: CircularProgressIndicator());
+          : const MessageView(
+              icon: Icons.menu_book_outlined,
+              title: 'Opening the course…',
+              action: SizedBox(width: 160, child: LinearProgressIndicator()),
+            );
     } else {
       final shown = [
         for (final m in modules)
@@ -336,7 +334,7 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
         onRefresh: _refresh,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
           children: [
             if (p != null) _ProgressCard(course: course, progress: p),
             const SizedBox(height: 12),
@@ -358,7 +356,7 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
     }
 
     return Scaffold(
-      appBar: thumbAppBar(course.courseCode, subtitle: Text(course.title, style: const TextStyle(fontSize: 13))),
+      appBar: thumbAppBar(course.courseCode, subtitle: course.title),
       bottomNavigationBar: ThumbBar(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -374,14 +372,10 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            SizedBox.square(
-              dimension: ThumbBar.heightOf(context),
-              child: IconButton.outlined(
-                tooltip: 'Open course in xSiTe',
-                style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: () => openInBrowser(context, course.homeUrl),
-                icon: Icon(Icons.open_in_new, color: theme.colorScheme.primary),
-              ),
+            ThumbIconButton(
+              tooltip: 'Open course in xSiTe',
+              icon: Icons.open_in_new,
+              onPressed: () => openInBrowser(context, course.homeUrl),
             ),
           ],
         ),
@@ -401,23 +395,21 @@ class _ProgressCard extends StatelessWidget {
     final theme = Theme.of(context);
     final fg = theme.colorScheme.onPrimaryContainer;
     final p = progress;
-    return Card(
+    return TintedCard(
       color: theme.colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              p.required == 0 ? 'Nothing to track' : '${(p.fraction * 100).round()}% done',
-              style: theme.textTheme.headlineSmall?.copyWith(color: fg, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: p.fraction, borderRadius: BorderRadius.circular(4)),
-            const SizedBox(height: 6),
-            Text('${p.completed} of ${p.required} items · ${course.termLabel}', style: TextStyle(color: fg)),
-          ],
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            p.required == 0 ? 'Nothing to track' : '${(p.fraction * 100).round()}% done',
+            style: theme.textTheme.headlineSmall?.copyWith(color: fg, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: p.fraction, borderRadius: BorderRadius.circular(4)),
+          const SizedBox(height: 6),
+          Text('${p.completed} of ${p.required} items · ${course.termLabel}',
+              style: theme.textTheme.bodyMedium?.copyWith(color: fg)),
+        ],
       ),
     );
   }
@@ -458,17 +450,13 @@ class _ModuleCard extends StatelessWidget {
 
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Theme(
-        // No divider lines around the expanding section.
-        data: theme.copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: done < all.length,
-          title: Text(module.title, style: theme.textTheme.titleMedium),
-          subtitle: Text('$done of ${all.length} done',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          childrenPadding: const EdgeInsets.only(bottom: 8),
-          children: rows(module, 0),
-        ),
+      child: ExpansionTile(
+        initiallyExpanded: done < all.length,
+        title: Text(module.title, style: theme.textTheme.titleMedium),
+        subtitle: Text('$done of ${all.length} done',
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        childrenPadding: const EdgeInsets.only(bottom: 8),
+        children: rows(module, 0),
       ),
     );
   }

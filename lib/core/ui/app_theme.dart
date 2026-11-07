@@ -50,6 +50,9 @@ class AppTheme {
         backgroundColor: scheme.surface,
         surfaceTintColor: Colors.transparent,
         centerTitle: false,
+        // A soft shadow once content scrolls under the title.
+        scrolledUnderElevation: 2,
+        shadowColor: scheme.shadow.withValues(alpha: 0.4),
       ),
       cardTheme: CardThemeData(
         elevation: 0,
@@ -71,13 +74,34 @@ class AppTheme {
         filled: true,
         fillColor: scheme.surfaceContainerLowest,
       ),
-      chipTheme: ChipThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+      textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(shape: shape)),
+      // Bars, toggles and chips share the buttons' 12 px corners.
+      segmentedButtonTheme: SegmentedButtonThemeData(style: SegmentedButton.styleFrom(shape: shape)),
+      chipTheme: ChipThemeData(shape: shape),
+      // Expanding sections sit inside cards, so no extra lines around them.
+      expansionTileTheme: const ExpansionTileThemeData(shape: Border(), collapsedShape: Border()),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
       listTileTheme: const ListTileThemeData(contentPadding: EdgeInsets.symmetric(horizontal: 16)),
     );
   }
+}
+
+/// Spacing used across screens, so they don't each pick their own numbers.
+abstract final class Space {
+  /// Between sections of a screen.
+  static const section = 24.0;
+
+  /// Between cards in a list.
+  static const card = 8.0;
+
+  /// Inside a content card.
+  static const inset = 16.0;
+
+  /// Inside a dense list row.
+  static const dense = 12.0;
+
+  /// Screen edges.
+  static const page = 16.0;
 }
 
 /// Status colours taken from the colour scheme, so they work in dark mode.

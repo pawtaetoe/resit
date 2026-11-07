@@ -53,6 +53,8 @@ class MainLayout extends ConsumerStatefulWidget {
 
 class _MainLayoutState extends ConsumerState<MainLayout> {
   // In the order of [AppTab].
+  final Set<int> _visited = {};
+
   static const _screens = [HomeScreen(), ServicesScreen(), SettingsScreen()];
 
   // Coming back to the app re-checks the session (and signs back in if it
@@ -90,13 +92,26 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       (Icons.apps_outlined, Icons.apps, 'Services'),
       (Icons.person_outline, Icons.person, 'Account'),
     ];
-    // A dot on Account tells the user sign-in is needed.
+    // A dot on Account tells the user sign-in is needed (and screen readers
+    // hear it).
     Widget icon(int i, bool selected) {
       final glyph = Icon(selected ? tabs[i].$2 : tabs[i].$1);
-      return i == AppTab.account ? Badge(isLabelVisible: needsSignIn, child: glyph) : glyph;
+      if (i != AppTab.account) return glyph;
+      return Semantics(
+        label: needsSignIn ? 'sign-in needed' : null,
+        child: Badge(isLabelVisible: needsSignIn, child: glyph),
+      );
     }
 
-    final body = IndexedStack(index: index, children: _screens);
+    // A tab is built the first time it's opened, then kept, so Account's
+    // reads (saved login, codes) don't run at launch.
+    _visited.add(index);
+    final body = IndexedStack(
+      index: index,
+      children: [
+        for (var i = 0; i < _screens.length; i++) _visited.contains(i) ? _screens[i] : const SizedBox.shrink(),
+      ],
+    );
 
     // Wide windows (desktop, tablets) get a side rail; phones keep the tabs
     // at the bottom, within thumb reach.

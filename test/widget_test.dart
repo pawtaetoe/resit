@@ -6,11 +6,15 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
+import 'package:resit/features/services/presentation/services_screen.dart';
 import 'package:resit/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 RoomSlot _slot(String label, {bool available = true}) =>
     RoomSlot(sltId: label, time: label, label: label, status: available ? '1' : '3', available: available);
+
+/// The Services tab's list (the other tabs have lists of their own).
+final _servicesList = find.descendant(of: find.byType(ServicesScreen), matching: find.byType(Scrollable)).first;
 
 void main() {
   setUp(() {
@@ -22,13 +26,13 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Not signed in'), findsOneWidget);
+    expect(find.text('Sign in to get started'), findsOneWidget);
     expect(find.text('Overview'), findsOneWidget);
 
     await tester.tap(find.text('Services'));
     await tester.pumpAndSettle();
-    for (final task in ['Book a room', 'My bookings', 'Timetable', 'Exam results', 'Academic calendar']) {
-      await tester.scrollUntilVisible(find.text(task), 100);
+    for (final task in ['Timetable', 'xSiTe courses', 'Academic calendar', 'Exam results', 'Book a room', 'My bookings']) {
+      await tester.scrollUntilVisible(find.text(task), 100, scrollable: _servicesList);
       expect(find.text(task), findsOneWidget, reason: task);
     }
   });
@@ -52,7 +56,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
+    expect(find.text('Next class: CSC 2101 Lecture'), findsOneWidget);
     expect(find.textContaining('Now:'), findsNothing);
     expect(find.text('Tomorrow, 09:00 – 11:00 · E2-03-01'), findsOneWidget);
   });
@@ -80,7 +84,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Now: CSC 1001 Lecture'), findsOneWidget);
-    expect(find.text('Next: CSC 2101 Lecture'), findsOneWidget);
+    expect(find.text('Next class: CSC 2101 Lecture'), findsOneWidget);
   });
 
   testWidgets('GPA is hidden on Home until the eye is tapped', (tester) async {
@@ -131,6 +135,7 @@ void main() {
 
     await tester.tap(find.text('Services'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Book a room'), 100, scrollable: _servicesList);
     await tester.tap(find.text('Book a room'));
     await tester.pumpAndSettle();
     expect(find.text('Sign in to continue'), findsOneWidget);
@@ -147,6 +152,7 @@ void main() {
 
     await tester.tap(find.text('Services'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('My bookings'), 100, scrollable: _servicesList);
     await tester.tap(find.text('My bookings'));
     await tester.pumpAndSettle();
     final back = find.byTooltip('Back');

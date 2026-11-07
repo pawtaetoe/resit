@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
 
@@ -73,25 +74,29 @@ class _AcademicCalendarScreenState extends ConsumerState<AcademicCalendarScreen>
                   message: "From SIT's website.",
                   action: SizedBox(width: 160, child: LinearProgressIndicator()),
                 ))
-          : RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                children: [
-                  if (_refreshing) const LinearProgressIndicator(),
-                  _NowCard(calendar: calendar, position: position, today: today),
-                  const SizedBox(height: 20),
-                  if (selected != null)
-                    for (final term in selected.terms) ...[
-                      _TermCard(term: term, today: today, initiallyExpanded: position?.term == term),
+          : Column(children: [
+              RefreshStrip(active: _refreshing),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
+                    children: [
+                      _NowCard(calendar: calendar, position: position, today: today),
+                      const SizedBox(height: 20),
+                      if (selected != null)
+                        for (final term in selected.terms) ...[
+                          _TermCard(term: term, today: today, initiallyExpanded: position?.term == term),
+                          const SizedBox(height: 8),
+                        ],
                       const SizedBox(height: 8),
+                      _Footnote(fetchedAt: calendar.fetchedAt),
                     ],
-                  const SizedBox(height: 8),
-                  _Footnote(fetchedAt: calendar.fetchedAt),
-                ],
+                  ),
+                ),
               ),
-            ),
+            ]),
     );
   }
 }
@@ -191,10 +196,7 @@ class _NowCard extends StatelessWidget {
       );
     }
 
-    return Card(
-      color: scheme.primaryContainer,
-      child: Padding(padding: const EdgeInsets.all(16), child: content),
-    );
+    return TintedCard(color: scheme.primaryContainer, child: content);
   }
 }
 
@@ -220,8 +222,7 @@ class _TermCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
         initiallyExpanded: initiallyExpanded,
-        shape: const Border(),
-        title: Text('${term.name} · ${term.start.year}', style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Text('${term.name} · ${term.start.year}', style: Theme.of(context).textTheme.titleMedium),
         subtitle: Text(summary),
         childrenPadding: const EdgeInsets.only(bottom: 8),
         children: [for (final w in term.weeks) _WeekRow(week: w, isNow: w.contains(today))],
@@ -271,12 +272,13 @@ class _WeekRow extends StatelessWidget {
               child: Text('${d.format(week.start)} – ${d.format(week.end)}',
                   style: TextStyle(fontWeight: isNow ? FontWeight.bold : null)),
             ),
+            // Spelled out, not an icon you'd have to long-press to understand.
             if (week.hasHoliday)
-              Tooltip(
-                message: holiday,
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Icon(Icons.celebration_outlined, size: 18, color: scheme.tertiary),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Tooltip(
+                  message: holiday,
+                  child: const StatusPill(label: 'PH', tone: Tone.warning, icon: Icons.celebration_outlined),
                 ),
               ),
             if (week.phase != WeekPhase.study) StatusPill(label: phaseLabel(week.phase), tone: _tone),

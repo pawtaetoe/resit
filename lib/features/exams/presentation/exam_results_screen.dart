@@ -5,21 +5,36 @@ import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
+import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
+import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
+import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 
 /// Exam results from in4SIT: opens on the latest term's result slip; the
 /// term picker in the bottom bar switches terms.
-class ExamResultsScreen extends ConsumerStatefulWidget {
-  const ExamResultsScreen({super.key});
+class ExamResultsScreen extends StatelessWidget {
+  /// Opened from Academic progress: its charts button goes back there
+  /// instead of opening another copy.
+  final bool fromProgress;
+  const ExamResultsScreen({super.key, this.fromProgress = false});
 
   @override
-  ConsumerState<ExamResultsScreen> createState() => _ExamResultsScreenState();
+  Widget build(BuildContext context) =>
+      AuthGate(title: 'Exam results', builder: (_) => _ExamResults(fromProgress: fromProgress));
 }
 
-class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
+class _ExamResults extends ConsumerStatefulWidget {
+  final bool fromProgress;
+  const _ExamResults({this.fromProgress = false});
+
+  @override
+  ConsumerState<_ExamResults> createState() => _ExamResultsScreenState();
+}
+
+class _ExamResultsScreenState extends ConsumerState<_ExamResults> {
   List<ExamTerm>? _terms;
   ExamTerm? _term;
   ExamResults? _results;
@@ -36,17 +51,7 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
-  /// Runs [task]; if in4SIT's sign-in fails, signs in afresh automatically
-  /// and tries once more, like the timetable.
-  Future<T> _withSession<T>(Future<T> Function() task) async {
-    try {
-      return await task();
-    } on SessionExpiredException {
-      final ok = await ref.read(sessionControllerProvider.notifier).ensureSignedIn(force: true);
-      if (!ok) rethrow;
-      return task();
-    }
-  }
+  Future<T> _withSession<T>(Future<T> Function() task) => withSignInRetry(ref, task);
 
   void _onChallenge(MfaChallenge c) {
     if (mounted) setState(() => _challenge = c);
@@ -123,7 +128,9 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
       icon: Icons.event_note_outlined,
       title: 'Choose a term',
       choices: [
-        for (final t in terms) SheetChoice(t, t.name, primary: t.name == _term?.name),
+        // The term on screen is ticked, not just coloured.
+        for (final t in terms)
+          SheetChoice(t, t.name, primary: t.name == _term?.name, icon: t.name == _term?.name ? Icons.check : null),
       ],
     );
     if (picked != null && picked.name != _term?.name) _load(term: picked);
@@ -132,7 +139,7 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: thumbAppBar('Exam results'),
+      appBar: thumbAppBar('Exam results', subtitle: 'Result slip for each term, from in4SIT'),
       bottomNavigationBar: ThumbBar(
         child: Row(
           // Fill the bar's height, so every control is the same size.
@@ -154,15 +161,16 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
             const SizedBox(width: 8),
             const GradeVisibilityButton(inBar: true),
             const SizedBox(width: 8),
-            SizedBox.square(
-              dimension: ThumbBar.heightOf(context),
-              child: IconButton.outlined(
-                tooltip: 'Refresh',
-                style: IconButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                onPressed: _loading ? null : () => _load(refresh: true),
-                icon: const Icon(Icons.refresh),
-              ),
+            // To the charts of every term (Academic progress links back here).
+            ThumbIconButton(
+              tooltip: 'Charts of every term',
+              icon: Icons.insights_outlined,
+              onPressed: () => widget.fromProgress
+                  ? Navigator.pop(context)
+                  : Navigator.push(context, MaterialPageRoute(builder: (_) => const AcademicProgressScreen())),
             ),
+            const SizedBox(width: 8),
+            ThumbIconButton(tooltip: 'Refresh', icon: Icons.refresh, onPressed: _loading ? null : () => _load(refresh: true)),
           ],
         ),
       ),
@@ -225,23 +233,27 @@ class _ExamResultsScreenState extends ConsumerState<ExamResultsScreen> {
 
     return Column(
       children: [
-        SizedBox(height: 3, child: _loading ? const LinearProgressIndicator() : null),
+        RefreshStrip(active: _loading),
         if (_skippedTerm != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Card(
-              color: Theme.of(context).colorScheme.secondaryContainer,
-              child: ListTile(
-                leading: const Icon(Icons.hourglass_empty),
-                title: Text('Results for $_skippedTerm aren\'t out yet'),
-                subtitle: Text('Showing ${results.term.name}.'),
-              ),
+            padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, 0),
+            child: StatusBanner(
+              tone: Tone.info,
+              icon: Icons.hourglass_empty,
+              title: 'Results for $_skippedTerm aren\'t out yet',
+              message: 'Showing ${results.term.name}.',
             ),
           ),
         if (_error != null)
-          MaterialBanner(
-            content: Text("Couldn't refresh: ${friendlyError(_error!)}"),
-            actions: [TextButton(onPressed: () => _load(refresh: true), child: const Text('Try again'))],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, 0),
+            child: StatusBanner(
+              tone: Tone.warning,
+              icon: Icons.cloud_off,
+              title: "Couldn't refresh",
+              message: friendlyError(_error!),
+              action: TextButton(onPressed: () => _load(refresh: true), child: const Text('Try again')),
+            ),
           ),
         Expanded(
           child: RefreshIndicator(
@@ -284,18 +296,21 @@ class _ResultSlip extends ConsumerWidget {
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
       children: [
         Text(results.heading, style: theme.textTheme.titleLarge),
         if (results.value('Programme') case final programme?)
           Text(programme, style: theme.textTheme.bodyMedium?.copyWith(color: muted)),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(child: _Stat(label: 'Trimester GPA', value: results.value('Trimester GPA'), hidden: !visible)),
-            const SizedBox(width: 12),
-            Expanded(child: _Stat(label: 'Cumulative GPA', value: results.value('Cumulative GPA'), hidden: !visible)),
-          ],
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _stat('Trimester GPA', results.value('Trimester GPA'), visible)),
+              const SizedBox(width: Space.card),
+              Expanded(child: _stat('Cumulative GPA', results.value('Cumulative GPA'), visible)),
+            ],
+          ),
         ),
         if (visible && standing != null && standing != '-') ...[
           const SizedBox(height: 8),
@@ -333,7 +348,6 @@ class _ResultSlip extends ConsumerWidget {
             child: ExpansionTile(
               leading: const Icon(Icons.badge_outlined),
               title: const Text('Slip details'),
-              shape: const Border(),
               childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               children: [
                 for (final (label, value) in results.details)
@@ -359,43 +373,18 @@ class _ResultSlip extends ConsumerWidget {
   }
 }
 
-class _Stat extends StatelessWidget {
-  final String label;
-  final String? value;
-  final bool hidden;
-  const _Stat({required this.label, this.value, this.hidden = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final card = Card(
-      color: theme.colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
-            const SizedBox(height: 4),
-            Text(
-              hidden
-                  ? hiddenValue
-                  : value == null || value!.isEmpty
-                      ? '–'
-                      : value!,
-              style: theme.textTheme.headlineMedium?.copyWith(
-                color: theme.colorScheme.onPrimaryContainer,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
+/// A GPA as a highlighted stat tile (value over label, as on Home and
+/// Academic progress), hidden until the user shows grades.
+Widget _stat(String label, String? value, bool visible) => StatTile(
+      tinted: true,
+      value: !visible
+          ? hiddenValue
+          : value == null || value.isEmpty
+              ? '–'
+              : value,
+      caption: label,
+      semanticsLabel: visible ? null : '$label, hidden',
     );
-    if (!hidden) return card;
-    return Semantics(label: '$label, hidden', excludeSemantics: true, child: card);
-  }
-}
 
 class _CourseCard extends StatelessWidget {
   final CourseResult course;

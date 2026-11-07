@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
@@ -23,66 +24,78 @@ class ServicesScreen extends StatelessWidget {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+          padding: const EdgeInsets.fromLTRB(Space.page, Space.section, Space.page, Space.section),
           children: [
             Text('Services', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 24),
+            const SizedBox(height: Space.section),
+            // Everyday things first, then results, then room booking.
+            const SectionLabel('Classes'),
+            ..._group([
+              _TaskTile(
+                icon: Icons.view_week_outlined,
+                title: 'Timetable',
+                subtitle: 'Your weekly class schedule from in4SIT',
+                onTap: () => _open(context, const TimetableScreen()),
+              ),
+              _TaskTile(
+                icon: Icons.menu_book_outlined,
+                title: 'xSiTe courses',
+                subtitle: 'Course content, your progress and what to do next',
+                onTap: () => _open(context, const CoursesScreen()),
+              ),
+              _TaskTile(
+                icon: Icons.calendar_month_outlined,
+                title: 'Academic calendar',
+                subtitle: 'Term dates, recess, finals and holidays',
+                onTap: () => _open(context, const AcademicCalendarScreen()),
+              ),
+            ]),
+            const SizedBox(height: Space.section),
+            const SectionLabel('Results'),
+            ..._group([
+              _TaskTile(
+                icon: Icons.grading_outlined,
+                title: 'Exam results',
+                subtitle: 'Result slip for each term: grades and GPA',
+                onTap: () => _open(context, const ExamResultsScreen()),
+              ),
+              _TaskTile(
+                icon: Icons.insights_outlined,
+                title: 'Academic progress',
+                subtitle: 'Charts of your GPA, credits and grades over time',
+                onTap: () => _open(context, const AcademicProgressScreen()),
+              ),
+            ]),
+            const SizedBox(height: Space.section),
             const SectionLabel('Room booking'),
-            _TaskTile(
-              icon: Icons.add_business_outlined,
-              title: 'Book a room',
-              subtitle: 'Find a free room for a time slot',
-              onTap: () => _open(context, const DashboardScreen()),
-            ),
-            const SizedBox(height: 8),
-            _TaskTile(
-              icon: Icons.event_note_outlined,
-              title: 'My bookings',
-              subtitle: 'See upcoming and past bookings, or cancel one',
-              onTap: () => _open(context, const ManageBookingScreen()),
-            ),
-            const SizedBox(height: 24),
-            const SectionLabel('Classes & exams'),
-            _TaskTile(
-              icon: Icons.calendar_view_week_outlined,
-              title: 'Timetable',
-              subtitle: 'Your weekly class schedule from in4SIT',
-              onTap: () => _open(context, const TimetableScreen()),
-            ),
-            const SizedBox(height: 8),
-            _TaskTile(
-              icon: Icons.school_outlined,
-              title: 'Courses',
-              subtitle: 'Your xSiTe courses, progress and what to do next',
-              onTap: () => _open(context, const CoursesScreen()),
-            ),
-            const SizedBox(height: 8),
-            _TaskTile(
-              icon: Icons.grading_outlined,
-              title: 'Exam results',
-              subtitle: 'Grades and GPA for each term',
-              onTap: () => _open(context, const ExamResultsScreen()),
-            ),
-            const SizedBox(height: 8),
-            _TaskTile(
-              icon: Icons.insights_outlined,
-              title: 'Academic progress',
-              subtitle: 'Charts of your GPA, credits and grades',
-              onTap: () => _open(context, const AcademicProgressScreen()),
-            ),
-            const SizedBox(height: 8),
-            _TaskTile(
-              icon: Icons.calendar_month_outlined,
-              title: 'Academic calendar',
-              subtitle: 'Term dates, recess, finals and holidays',
-              onTap: () => _open(context, const AcademicCalendarScreen()),
-            ),
+            ..._group([
+              _TaskTile(
+                icon: Icons.meeting_room_outlined,
+                title: 'Book a room',
+                subtitle: 'Find a free discussion or meeting room',
+                onTap: () => _open(context, const DashboardScreen()),
+              ),
+              _TaskTile(
+                icon: Icons.event_note_outlined,
+                title: 'My bookings',
+                subtitle: 'See upcoming and past bookings, or cancel one',
+                onTap: () => _open(context, const ManageBookingScreen()),
+              ),
+            ]),
           ],
         ),
       ),
     );
   }
 }
+
+/// Cards with the standard gap between them.
+List<Widget> _group(List<Widget> tiles) => [
+      for (var i = 0; i < tiles.length; i++) ...[
+        if (i > 0) const SizedBox(height: Space.card),
+        tiles[i],
+      ],
+    ];
 
 /// A whole-card tap target (large and easy to hit) for one task.
 class _TaskTile extends StatelessWidget {
@@ -106,7 +119,7 @@ class _TaskTile extends StatelessWidget {
           foregroundColor: scheme.onPrimaryContainer,
           child: Icon(icon),
         ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        title: Text(title, style: Theme.of(context).textTheme.titleMedium),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
       ),
