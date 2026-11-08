@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +23,9 @@ class _FakeServer {
   /// ADFS asks for push approval after the password, and never gets it.
   bool mfaPending = false;
 
+  /// The next N password posts stall until the client gives up.
+  int stalls = 0;
+
   static const _mfaPage = '<form method="post" action="/adfs/ls/?client-request-id=1">'
       '<input type="hidden" name="AuthMethod" value="AzureMfaAuthentication"/>'
       '<input type="hidden" name="Context" value="ctx"/></form>';
@@ -40,6 +45,10 @@ class _FakeServer {
     }
     if (request.method == 'POST' && request.bodyFields.containsKey('Password')) {
       logins++;
+      if (stalls > 0) {
+        stalls--;
+        throw TimeoutException('No response from fs.singaporetech.edu.sg in time.');
+      }
       if (request.bodyFields['Password'] != password) {
         return http.Response(
             '<form><input type="password" name="Password"></form>'
@@ -115,6 +124,28 @@ void main() {
     final results = await Future.wait([controller.ensureSignedIn(), controller.ensureSignedIn()]);
     expect(results, [true, true]);
     expect(server.logins, 1);
+  });
+
+  test('a sign-in step that times out is retried once by itself', () async {
+    build(creds);
+    server.stalls = 1;
+    expect(await controller.ensureSignedIn(), isTrue);
+    expect(server.logins, 2);
+    expect(controller.state.phase, SessionPhase.signedIn);
+  });
+
+  test('two timeouts in a row are reported, not retried forever', () async {
+    build(creds);
+    server.stalls = 2;
+    expect(await controller.ensureSignedIn(), isFalse);
+    expect(server.logins, 2);
+    expect(controller.state.phase, SessionPhase.failed);
+    expect(controller.state.error, contains('too long'));
+  });
+
+  test('sign-in requests may take longer than ordinary page loads', () {
+    build(creds);
+    expect(AuthService.signInStepTimeout, greaterThan(SessionClient.defaultTimeout));
   });
 
   test('does nothing without saved credentials', () async {

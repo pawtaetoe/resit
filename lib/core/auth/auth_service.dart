@@ -228,6 +228,10 @@ class AuthService {
   /// Full ADFS sign-in. If ADFS asks for MFA, [onMfaChallenge] is called so the
   /// UI can tell the user to approve the request in Microsoft Authenticator,
   /// and this future stays pending until they do (or [mfaTimeout] passes).
+  /// How long one request may take during sign-in. SIT's sign-in server
+  /// can take well over the client's 30 s default when it's busy.
+  static const signInStepTimeout = Duration(seconds: 90);
+
   Future<bool> login(
     String username,
     String password, {
@@ -247,8 +251,12 @@ class AuthService {
     _lastValidated = null;
 
     try {
-      return await _login(username, password,
-          cancel: cancel, log: log, onMfaChallenge: onMfaChallenge, mfaTimeout: mfaTimeout);
+      // SIT's sign-in server can be slow when busy: sign-in steps get longer
+      // than the client's default per request (the MFA wait has its own).
+      return await client.withTimeout(
+          signInStepTimeout,
+          () => _login(username, password,
+              cancel: cancel, log: log, onMfaChallenge: onMfaChallenge, mfaTimeout: mfaTimeout));
     } on SignInCancelledException {
       log('Sign-in cancelled.');
       client.clearCookies();
@@ -720,6 +728,19 @@ class AuthService {
     void Function(String message)? onLog,
     void Function(MfaChallenge challenge)? onMfaChallenge,
     Duration mfaTimeout = const Duration(minutes: 2),
+  }) =>
+      // Single sign-on runs through SIT's sign-in server too: same longer limit.
+      client.withTimeout(
+          signInStepTimeout,
+          () => _getWithSso(url,
+              thenGet: thenGet, onLog: onLog, onMfaChallenge: onMfaChallenge, mfaTimeout: mfaTimeout));
+
+  Future<http.Response> _getWithSso(
+    Uri url, {
+    Uri? thenGet,
+    void Function(String message)? onLog,
+    void Function(MfaChallenge challenge)? onMfaChallenge,
+    required Duration mfaTimeout,
   }) async {
     final cancel = _cancel;
     var response = await client.get(url);
