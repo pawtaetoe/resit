@@ -78,4 +78,29 @@ void main() {
     expect(find.text('2 of 3 items done'), findsOneWidget);
     expect(find.text('P2'), findsOneWidget);
   });
+
+  testWidgets('latest announcements across this term: newest 5, the rest under "more"', (tester) async {
+    LmsCourse c(String id, String code) =>
+        LmsCourse(orgUnitId: id, name: '$code-Course [2026/27 T1]', code: 'SIT-$code', semester: '2026/27 Trimester 1');
+    final a = c('1', 'INF2004'), b = c('2', 'CSC2101');
+    Announcement n(String t, int day) => Announcement(id: t, title: t, body: 'Body of $t', date: DateTime(2026, 11, day));
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        lmsAnnouncementsProvider('1').overrideWith((ref) async => [n('A1', 10), n('A2', 8), n('A3', 2)]),
+        lmsAnnouncementsProvider('2').overrideWith((ref) async => [n('B1', 12), n('B2', 9), n('B3', 5), n('B4', 1)]),
+      ],
+      child: MaterialApp(home: Scaffold(body: ListView(children: [TermAnnouncements(courses: [a, b])]))),
+    ));
+    await tester.pumpAndSettle();
+
+    for (final t in ['B1', 'A1', 'B2', 'A2', 'B3']) {
+      expect(find.text(t), findsOneWidget, reason: t);
+    }
+    expect(find.text('A3'), findsNothing);
+    expect(find.text('2 more announcements'), findsOneWidget);
+    await tester.tap(find.text('2 more announcements'));
+    await tester.pumpAndSettle();
+    expect(find.text('A3'), findsOneWidget);
+    expect(find.text('B4'), findsOneWidget);
+  });
 }
