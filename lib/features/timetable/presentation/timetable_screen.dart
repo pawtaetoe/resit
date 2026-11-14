@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -91,7 +93,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     super.dispose();
   }
 
-  Future<void> _loadWeek(DateTime monday, {bool force = false}) async {
+  /// Loads a week. [prefetch] is a quiet look-ahead: a failure isn't kept
+  /// as the week's error (it's simply asked for again when shown), and it
+  /// doesn't chain another look-ahead.
+  Future<void> _loadWeek(DateTime monday, {bool force = false, bool prefetch = false}) async {
     if (_loadingWeeks.contains(monday)) return;
     if (!force && (_weeks.containsKey(monday) || _weekErrors.containsKey(monday))) return;
 
@@ -111,12 +116,18 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
 
     try {
       if (force) service.reset();
-      final week = await withSignInRetry(ref, fetch, beforeRetry: service.reset);
+      final week = await (prefetch ? service.week(monday) : withSignInRetry(ref, fetch, beforeRetry: service.reset));
       if (!mounted) return;
       setState(() => _weeks[monday] = week);
+      // Swiping on is the likely next step: fetch the following week behind
+      // this one (in4SIT takes one request at a time, so it just queues).
+      if (!prefetch) {
+        final next = DateTime(monday.year, monday.month, monday.day + 7);
+        if (!_weeks.containsKey(next)) unawaited(_loadWeek(next, prefetch: true));
+      }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _weekErrors[monday] = e);
+      if (!prefetch) setState(() => _weekErrors[monday] = e);
     } finally {
       if (mounted) {
         setState(() {

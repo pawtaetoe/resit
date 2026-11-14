@@ -20,38 +20,78 @@ class OverviewGrid extends ConsumerWidget {
 
   void _open(BuildContext context, Widget screen) => Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
 
-  Future<void> _setGraduation(BuildContext context, WidgetRef ref, DateTime? current) async {
+  /// Pick the graduation year (students rarely know the exact day): the
+  /// countdown then runs to the Friday ending Trimester 3 finals that year.
+  Future<void> _setGraduation(BuildContext context, WidgetRef ref, int? current) async {
     final now = DateTime.now();
-    final picked = await showDatePicker(
+    // A year whose graduation day has passed can't be picked.
+    final first = graduationDay(now.year, ref.read(academicCalendarProvider).valueOrNull).date.isBefore(now)
+        ? now.year + 1
+        : now.year;
+    final picked = await showModalBottomSheet<int>(
       context: context,
-      helpText: 'Expected graduation date',
-      initialDate: current ?? DateTime(now.year + 3, now.month, now.day),
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 10),
+      showDragHandle: true,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.page),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('When do you graduate?', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 4),
+                Text(
+                  'Pick the year. The countdown runs to the last day of finals in Trimester 3 that year '
+                  '(July or August), from SIT\'s academic calendar.',
+                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: Space.page),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (var y = first; y <= first + 5; y++)
+                      ChoiceChip(
+                        label: Text('$y'),
+                        selected: y == current,
+                        onSelected: (_) => Navigator.pop(context, y),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
     if (picked == null) return;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('graduation_date', picked.millisecondsSinceEpoch);
-    ref.invalidate(graduationDateProvider);
+    await prefs.setInt('graduation_year', picked);
+    await prefs.remove('graduation_date');
+    ref.invalidate(graduationYearProvider);
   }
 
-  /// Change or clear a graduation date already set.
-  Future<void> _editGraduation(BuildContext context, WidgetRef ref, DateTime current) async {
+  /// Change or clear the graduation year.
+  Future<void> _editGraduation(BuildContext context, WidgetRef ref, int year, DateTime date, bool estimated) async {
     final choice = await showChoiceSheet<String>(
       context,
       icon: Icons.workspace_premium_outlined,
-      title: 'Graduation date',
-      message: DateFormat('d MMMM yyyy').format(current),
+      title: 'Graduating in $year',
+      message: 'Counting down to ${DateFormat('EEEE d MMMM yyyy').format(date)}, the last day of Trimester 3 finals'
+          '${estimated ? ' (estimated: SIT\'s calendar doesn\'t list $year yet)' : ''}.',
       choices: const [
-        SheetChoice('change', 'Change date', icon: Icons.edit_calendar_outlined, primary: true),
+        SheetChoice('change', 'Change year', icon: Icons.edit_calendar_outlined, primary: true),
         SheetChoice('clear', 'Remove the countdown', icon: Icons.delete_outline, danger: true),
       ],
     );
     if (!context.mounted || choice == null) return;
-    if (choice == 'change') return _setGraduation(context, ref, current);
+    if (choice == 'change') return _setGraduation(context, ref, year);
     final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('graduation_year');
     await prefs.remove('graduation_date');
-    ref.invalidate(graduationDateProvider);
+    ref.invalidate(graduationYearProvider);
   }
 
   @override
@@ -62,7 +102,7 @@ class OverviewGrid extends ConsumerWidget {
     final recordAsync = ref.watch(academicRecordProvider);
     final record = recordAsync.valueOrNull ?? ref.watch(savedAcademicRecordProvider).valueOrNull;
     final signedIn = ref.watch(authStateProvider);
-    final graduation = ref.watch(graduationDateProvider).valueOrNull;
+    final graduation = ref.watch(graduationProvider);
     final gradesVisible = ref.watch(gradesVisibleProvider);
     final d = DateFormat('d MMM');
     void openCalendar() => _open(context, const AcademicCalendarScreen());
@@ -157,16 +197,6 @@ class OverviewGrid extends ConsumerWidget {
       tiles.add(const StatTile(icon: Icons.school_outlined, value: '…', caption: 'adding up your credits'));
     }
 
-    // Graduation: set by the user, since nothing in in4SIT says when. Until
-    // then it's a button, not a tile, so it doesn't read as data.
-    if (graduation != null) {
-      tiles.add(StatTile(
-        icon: Icons.workspace_premium_outlined,
-        value: _days(graduation.difference(today).inDays),
-        caption: 'to graduation (${DateFormat('MMM yyyy').format(graduation)})',
-        onTap: () => _editGraduation(context, ref, graduation),
-      ));
-    }
 
     // Rows of tiles (two on a phone, three on wider screens); tiles in a
     // row share the tallest one's height, so captions of different lengths
@@ -182,6 +212,16 @@ class OverviewGrid extends ConsumerWidget {
           // The show/hide-grades eye sits in the heading, not on the GPA tile,
           // so a near miss can't open Academic progress instead.
           SectionLabel('Overview', trailing: showsGpa ? const GradeVisibilityButton() : null),
+          // Graduation: a countdown ring once a year is set.
+          if (graduation != null) ...[
+            GraduationRing(
+              date: graduation.date,
+              estimated: graduation.estimated,
+              start: _programmeStart(record?.admitTerm, graduation.date),
+              onTap: () => _editGraduation(context, ref, graduation.year, graduation.date, graduation.estimated),
+            ),
+            const SizedBox(height: gap),
+          ],
           for (var i = 0; i < tiles.length; i += perRow) ...[
             if (i > 0) const SizedBox(height: gap),
             IntrinsicHeight(
@@ -203,7 +243,7 @@ class OverviewGrid extends ConsumerWidget {
               child: TextButton.icon(
                 onPressed: () => _setGraduation(context, ref, null),
                 icon: const Icon(Icons.workspace_premium_outlined),
-                label: const Text('Set graduation date for a countdown'),
+                label: const Text('Set your graduation year for a countdown'),
               ),
             ),
           ],
@@ -218,3 +258,98 @@ String _days(int days) => switch (days) {
       1 => '1 day',
       _ => '$days days',
     };
+
+/// When the programme started, for the ring's "how far along": September of
+/// the admit term's first year ("AY2024/25 Trimester 1" → Sep 2024). Without
+/// one, assume a three-year programme.
+DateTime _programmeStart(String? admitTerm, DateTime graduation) {
+  final year = admitTerm == null ? null : RegExp(r'(20\d{2})').firstMatch(admitTerm)?.group(1);
+  if (year != null) return DateTime(int.parse(year), 9, 1);
+  return DateTime(graduation.year - 3, 9, 1);
+}
+
+/// Days to graduation in the middle of a ring that fills as time passes,
+/// from the start of the programme to graduation day.
+class GraduationRing extends StatelessWidget {
+  final DateTime date;
+  final DateTime start;
+  final bool estimated;
+  final VoidCallback onTap;
+
+  const GraduationRing({
+    super.key,
+    required this.date,
+    required this.start,
+    required this.estimated,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final fg = scheme.onPrimaryContainer;
+    final today = DateUtils.dateOnly(DateTime.now());
+    final days = date.difference(today).inDays;
+    final total = date.difference(start).inDays;
+    final done = total <= 0 ? 1.0 : (today.difference(start).inDays / total).clamp(0.0, 1.0);
+    final ringSize = MediaQuery.textScalerOf(context).scale(96).clamp(96.0, 140.0);
+    final caption = days <= 0
+        ? 'Graduation day!'
+        : '${(done * 100).round()}% of the way · ${DateFormat('EEE d MMM yyyy').format(date)}'
+            '${estimated ? ' (estimated)' : ''}';
+
+    return Semantics(
+      button: true,
+      label: days <= 0 ? 'Graduation day' : '$days days to graduation, $caption',
+      excludeSemantics: true,
+      child: TintedCard(
+        color: scheme.primaryContainer,
+        onTap: onTap,
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: ringSize,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CircularProgressIndicator(
+                    value: done,
+                    strokeWidth: 9,
+                    strokeCap: StrokeCap.round,
+                    color: scheme.primary,
+                    backgroundColor: scheme.primary.withValues(alpha: 0.15),
+                  ),
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FittedBox(
+                          child: Text(days <= 0 ? '🎓' : '$days',
+                              style: theme.textTheme.headlineSmall?.copyWith(color: fg, fontWeight: FontWeight.bold)),
+                        ),
+                        if (days > 0) Text(days == 1 ? 'day' : 'days', style: theme.textTheme.labelSmall?.copyWith(color: fg)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: Space.inset),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('to graduation', style: theme.textTheme.titleMedium?.copyWith(color: fg)),
+                  const SizedBox(height: 4),
+                  Text(caption, style: theme.textTheme.bodySmall?.copyWith(color: fg)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: fg),
+          ],
+        ),
+      ),
+    );
+  }
+}

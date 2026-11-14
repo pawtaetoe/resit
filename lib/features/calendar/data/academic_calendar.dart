@@ -193,6 +193,30 @@ class AcademicCalendar {
     return best;
   }
 
+  /// The Friday that ends Trimester 3's finals in [year] (July/August), from
+  /// the calendar; null if the calendar doesn't cover that year.
+  DateTime? lastFinalsFriday(int year) {
+    DateTime? best;
+    for (final (_, t) in _terms) {
+      if (!RegExp(r'\b3\b').hasMatch(t.name)) continue;
+      for (final w in t.weeks) {
+        if (w.phase != WeekPhase.finals) continue;
+        final friday = fridayOf(w.start);
+        if (friday.year == year && (best == null || friday.isAfter(best))) best = friday;
+      }
+    }
+    return best;
+  }
+
+  /// Every Trimester 3 finals-ending Friday the calendar knows.
+  List<DateTime> get t3FinalsFridays {
+    final years = <int>{for (final (_, t) in _terms) for (final w in t.weeks) w.start.year};
+    return [
+      for (final y in years.toList()..sort())
+        if (lastFinalsFriday(y) case final d?) d,
+    ];
+  }
+
   /// The first trimester starting after [day], for gaps between terms.
   (AcademicYear, AcademicTerm)? nextTermAfter(DateTime day) {
     for (final (y, t) in _terms) {
@@ -372,4 +396,30 @@ class AcademicCalendarService {
     final html = prefs.getString(_keyHtml);
     return html == null ? null : AcademicCalendar(parseAcademicCalendar(html), savedAt);
   }
+}
+
+/// The Friday of the week starting [weekStart] (the week's Monday or so).
+DateTime fridayOf(DateTime weekStart) {
+  final d = DateTime(weekStart.year, weekStart.month, weekStart.day);
+  return DateTime(d.year, d.month, d.day + (DateTime.friday - d.weekday) % 7);
+}
+
+/// Graduation day for a graduation [year]: the Friday that ends Trimester 3
+/// finals that year (July/August). From the calendar when it covers that
+/// year; otherwise estimated from the latest year it does cover, moved by
+/// whole weeks so it stays a Friday; with no calendar at all, the first
+/// Friday of August.
+({DateTime date, bool estimated}) graduationDay(int year, AcademicCalendar? calendar) {
+  final exact = calendar?.lastFinalsFriday(year);
+  if (exact != null) return (date: exact, estimated: false);
+  final known = calendar?.t3FinalsFridays ?? const <DateTime>[];
+  if (known.isNotEmpty) {
+    final ref = known.last;
+    // Same date that many years on, then the nearest Friday.
+    final target = DateTime(year, ref.month, ref.day);
+    final offset = (DateTime.friday - target.weekday + 7) % 7;
+    final friday = offset <= 3 ? target.add(Duration(days: offset)) : target.subtract(Duration(days: 7 - offset));
+    return (date: friday, estimated: true);
+  }
+  return (date: fridayOf(DateTime(year, 8, 1)), estimated: true);
 }

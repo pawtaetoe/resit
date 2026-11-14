@@ -102,6 +102,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ref.read(lmsServiceProvider).clearCache();
     ref.invalidate(lmsProgressProvider);
     ref.invalidate(lmsContentsProvider);
+    for (final p in [
+      lmsAnnouncementsProvider,
+      lmsAssignmentsProvider,
+      lmsQuizzesProvider,
+      lmsGradesProvider,
+      lmsGroupsProvider,
+      lmsCourseDueProvider,
+    ]) {
+      ref.invalidate(p);
+    }
     if (forget) {
       ref.invalidate(totpConfigProvider);
       _usernameController.clear();

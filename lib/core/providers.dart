@@ -12,6 +12,7 @@ import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
+import 'package:resit/features/lms/data/lms_activities.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
@@ -166,6 +167,30 @@ final upcomingClassesProvider = FutureProvider<List<ClassSession>>((ref) async {
 
 final lmsServiceProvider = Provider<LmsService>((ref) => LmsService(ref.watch(authServiceProvider)));
 
+// A course's activities, by xSiTe course id. Kept once loaded (so going back
+// to a course is instant) until refreshed or signed out.
+final lmsAnnouncementsProvider = FutureProvider.family<List<Announcement>, String>(
+    (ref, id) => ref.watch(lmsServiceProvider).announcements(id));
+final lmsAssignmentsProvider =
+    FutureProvider.family<List<Assignment>, String>((ref, id) => ref.watch(lmsServiceProvider).assignments(id));
+final lmsQuizzesProvider =
+    FutureProvider.family<List<Quiz>, String>((ref, id) => ref.watch(lmsServiceProvider).quizzes(id));
+final lmsGradesProvider =
+    FutureProvider.family<CourseGrades, String>((ref, id) => ref.watch(lmsServiceProvider).grades(id));
+final lmsGroupsProvider =
+    FutureProvider.family<List<MyGroup>, String>((ref, id) => ref.watch(lmsServiceProvider).groups(id));
+
+/// What's due soon in one course: assignments not yet submitted and quizzes,
+/// read side by side. A course without either tool just has nothing due.
+final lmsCourseDueProvider = FutureProvider.family<List<DueItem>, ({String id, String code})>((ref, c) async {
+  Future<List<T>> orEmpty<T>(Future<List<T>> f) => f.catchError((Object e) => e is LmsUnavailableException ? <T>[] : throw e);
+  final assignments = orEmpty(ref.watch(lmsAssignmentsProvider(c.id).future));
+  final quizzes = orEmpty(ref.watch(lmsQuizzesProvider(c.id).future));
+  // Both at once; the first real error (if any) is reported as is.
+  await Future.wait([assignments, quizzes]);
+  return dueSoon(c.code, await assignments, await quizzes, DateTime.now());
+});
+
 /// How far through a course's content (by xSiTe course id) the user is. Kept
 /// until the course list is refreshed.
 final lmsProgressProvider = FutureProvider.family<CourseProgress, String>((ref, orgUnitId) {
@@ -193,9 +218,21 @@ final academicRecordProvider = FutureProvider<AcademicRecord?>((ref) async {
   return ref.watch(academicRecordServiceProvider).load();
 });
 
-/// The graduation date the user set on Home, if any.
-final graduationDateProvider = FutureProvider<DateTime?>((ref) async {
+/// The graduation year the user set on Home, if any. (Older versions saved
+/// a full date; its year is used.)
+final graduationYearProvider = FutureProvider<int?>((ref) async {
   final prefs = await SharedPreferences.getInstance();
+  final year = prefs.getInt('graduation_year');
+  if (year != null) return year;
   final ms = prefs.getInt('graduation_date');
-  return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms).year;
+});
+
+/// Graduation day from the year: the Friday ending Trimester 3 finals that
+/// year, from SIT's calendar (or estimated when the calendar doesn't reach it).
+final graduationProvider = Provider<({int year, DateTime date, bool estimated})?>((ref) {
+  final year = ref.watch(graduationYearProvider).valueOrNull;
+  if (year == null) return null;
+  final day = graduationDay(year, ref.watch(academicCalendarProvider).valueOrNull);
+  return (year: year, date: day.date, estimated: day.estimated);
 });

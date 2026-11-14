@@ -13,6 +13,8 @@ import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
+import 'package:resit/features/lms/data/lms_activities.dart';
+import 'package:resit/features/lms/presentation/course_sections.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Opens [url] in the browser (xSiTe pages need its full web app).
@@ -159,6 +161,8 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
               children: [
+                // Deadlines across this term's courses, soonest first.
+                _TermDueSoon(courses: groups[terms.first]!),
                 for (final term in terms) ...[
                   SectionLabel(term == terms.first ? '$term · this term' : term),
                   for (final c in groups[term]!)
@@ -279,19 +283,18 @@ class _CourseImage extends ConsumerWidget {
   }
 }
 
-/// One course: how much is done, then its content folder by folder, as on
-/// xSiTe. Done items stay listed (ticked and dimmed) so they can be opened
+/// A course's content, folder by folder, as on xSiTe, with how much is done. Done items stay listed (ticked and dimmed) so they can be opened
 /// again. Items open in the browser: links at their own address, files on
 /// xSiTe.
-class CourseScreen extends ConsumerStatefulWidget {
+class CourseContentScreen extends ConsumerStatefulWidget {
   final LmsCourse course;
-  const CourseScreen({super.key, required this.course});
+  const CourseContentScreen({super.key, required this.course});
 
   @override
-  ConsumerState<CourseScreen> createState() => _CourseScreenState();
+  ConsumerState<CourseContentScreen> createState() => _CourseContentScreenState();
 }
 
-class _CourseScreenState extends ConsumerState<CourseScreen> {
+class _CourseContentScreenState extends ConsumerState<CourseContentScreen> {
   LmsCourse get course => widget.course;
 
   Future<void> _refresh() async {
@@ -361,19 +364,12 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
     }
 
     return Scaffold(
-      appBar: thumbAppBar(course.courseCode, subtitle: course.title),
+      appBar: thumbAppBar('Content', subtitle: '${course.courseCode} · ${course.title}'),
       bottomNavigationBar: ThumbBar(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: () => openInBrowser(context, course.homeUrl),
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('Open course in xSiTe', overflow: TextOverflow.ellipsis),
-              ),
-            ),
-          ],
+        child: FilledButton.tonalIcon(
+          onPressed: () => openInBrowser(context, Uri.parse('${LmsService.base}/d2l/le/content/${course.orgUnitId}/Home')),
+          icon: const Icon(Icons.open_in_new),
+          label: const Text('Open in xSiTe', overflow: TextOverflow.ellipsis),
         ),
       ),
       body: body,
@@ -485,6 +481,46 @@ class _TopicTile extends StatelessWidget {
           ? Icon(Icons.check_circle, color: theme.colorScheme.primary, semanticLabel: 'Done')
           : Icon(Icons.open_in_new, size: 18, color: muted),
       onTap: () => openInBrowser(context, topic.openUrl),
+    );
+  }
+}
+
+/// "Due soon" across this term's courses: each course's assignments and
+/// quizzes are read side by side (a few requests at a time), and deadlines
+/// show as they arrive. Hidden when nothing is due.
+class _TermDueSoon extends ConsumerWidget {
+  final List<LmsCourse> courses;
+  const _TermDueSoon({required this.courses});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final now = DateTime.now();
+    final items = <DueItem>[];
+    var loading = 0;
+    for (final c in courses) {
+      final due = ref.watch(lmsCourseDueProvider((id: c.orgUnitId, code: c.courseCode)));
+      if (due.isLoading && !due.hasValue) loading++;
+      items.addAll(due.valueOrNull ?? const []);
+    }
+    items.sort((a, b) => a.due.compareTo(b.due));
+    if (items.isEmpty && loading == 0) return const SizedBox.shrink();
+    final shown = items.take(5).toList();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.section - Space.card),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionLabel(loading > 0 ? 'Due soon · checking ${courses.length - loading} of ${courses.length}' : 'Due soon'),
+          for (final d in shown) DueTile(item: d, now: now),
+          if (items.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: Space.card),
+              child: Text('+${items.length - shown.length} more in the courses below',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            ),
+          if (shown.isEmpty) const Padding(padding: EdgeInsets.only(bottom: Space.card), child: LinearProgressIndicator()),
+        ],
+      ),
     );
   }
 }

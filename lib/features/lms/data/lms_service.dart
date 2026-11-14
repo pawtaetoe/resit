@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
+import 'package:resit/features/lms/data/lms_activities.dart';
 
 /// One course on xSiTe (SIT's Brightspace LMS).
 class LmsCourse {
@@ -280,6 +281,16 @@ List<LmsCourse> sortCourses(Iterable<LmsCourse> courses) {
 
 /// Reads xSiTe with the same SIT single sign-on as in4SIT: xSiTe hands off
 /// to SIT's ADFS, which already knows the user, and back.
+/// A course tool xSiTe won't give the app (not used in the course, or not
+/// open to students), as opposed to being signed out.
+class LmsUnavailableException implements Exception {
+  final String path;
+  LmsUnavailableException(this.path);
+
+  @override
+  String toString() => "This isn't available for this course on xSiTe.";
+}
+
 class LmsService {
   static const base = 'https://xsite.singaporetech.edu.sg';
 
@@ -385,6 +396,101 @@ class LmsService {
     return parseToc(orgUnitId, await _getJson(url, onMfaChallenge, limited: true));
   }
 
+  // --- Course activities (announcements, assignments, quizzes, grades, groups)
+
+  static const _le = '$base/d2l/api/le/1.75';
+  static const _lp = '$base/d2l/api/lp/1.47';
+
+  Future<String> _api(String url, void Function(MfaChallenge)? onMfaChallenge) =>
+      _getJson(Uri.parse(url), onMfaChallenge, limited: true);
+
+  /// A course's announcements, newest first.
+  Future<List<Announcement>> announcements(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async =>
+      parseAnnouncements(await _api('$_le/$orgUnitId/news/', onMfaChallenge));
+
+  /// A course's assignments (dropbox folders), soonest deadline first, each
+  /// with when you submitted (if you did). A folder whose submissions can't
+  /// be read keeps `submissions == null`.
+  Future<List<Assignment>> assignments(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async {
+    final folders = parseAssignments(orgUnitId, await _api('$_le/$orgUnitId/dropbox/folders/', onMfaChallenge));
+    return Future.wait([
+      for (final f in folders)
+        _api('$_le/$orgUnitId/dropbox/folders/${f.id}/submissions/mysubmissions/', onMfaChallenge)
+            .then((b) => f.withSubmissions(parseMySubmissions(b)))
+            .catchError((Object _) => f),
+    ]);
+  }
+
+  /// A course's quizzes, soonest deadline first.
+  Future<List<Quiz>> quizzes(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async {
+    final all = <Quiz>[];
+    String? url = '$_le/$orgUnitId/quizzes/';
+    for (var page = 0; page < 10 && url != null; page++) {
+      final parsed = parseQuizzes(orgUnitId, await _api(url, onMfaChallenge));
+      all.addAll(parsed.quizzes);
+      final next = parsed.next;
+      url = next == null ? null : Uri.parse(base).resolve(next).toString();
+    }
+    return sortQuizzes(all);
+  }
+
+  /// Your released grades in a course, and the final grade if released.
+  Future<CourseGrades> grades(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async {
+    final items = parseGrades(await _api('$_le/$orgUnitId/grades/values/myGradeValues/', onMfaChallenge));
+    GradeEntry? finalGrade;
+    try {
+      finalGrade = parseFinalGrade(await _api('$_le/$orgUnitId/grades/final/values/myGradeValue', onMfaChallenge));
+    } catch (_) {
+      // Not released yet (xSiTe answers 404).
+    }
+    return CourseGrades(items, finalGrade);
+  }
+
+  String? _myId;
+
+  /// The groups you're in for a course, with members' names when the class
+  /// list can be read.
+  Future<List<MyGroup>> groups(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async {
+    // Who you are and the course's categories at the same time, then every
+    // category's groups at once (the limiter keeps it to a few requests).
+    final meFuture = _myId != null ? Future.value('') : _api('$_lp/users/whoami', onMfaChallenge);
+    final categoriesFuture = _api('$_lp/$orgUnitId/groupcategories/', onMfaChallenge);
+    await Future.wait([meFuture, categoriesFuture]);
+    final meBody = await meFuture, categoriesBody = await categoriesFuture;
+    final me = _myId ??= parseWhoAmI(meBody);
+    final categories = parseGroupCategories(categoriesBody);
+    final perCategory = await Future.wait([
+      for (final c in categories)
+        _api('$_lp/$orgUnitId/groupcategories/${c.id}/groups/', onMfaChallenge).then((b) => (c.name, parseGroups(b))),
+    ]);
+    final found = [
+      for (final (category, groups) in perCategory)
+        for (final g in groups)
+          if (g.members.contains(me)) (category, g),
+    ];
+    var names = const <String, String>{};
+    if (found.isNotEmpty) {
+      try {
+        names = parseClasslist(await _api('$_le/$orgUnitId/classlist/', onMfaChallenge));
+      } catch (_) {
+        // The class list may be closed to students: members show as a count.
+      }
+    }
+    return [
+      for (final (category, g) in found)
+        MyGroup(
+          category: category,
+          name: g.name,
+          description: g.description,
+          memberCount: g.members.length,
+          members: [
+            for (final id in g.members)
+              if (names[id] case final name?) GroupMember(id, id == me ? '$name (you)' : name),
+          ],
+        ),
+    ];
+  }
+
   /// The course's picture, about [size] pixels across (the list shows it
   /// at 56 dp, so 168 px covers a 3× screen), or null if it has none or
   /// can't be read. Kept for the app's lifetime.
@@ -412,11 +518,20 @@ class LmsService {
   /// within [maxInFlight].
   Future<String> _getJson(Uri url, void Function(MfaChallenge)? onMfaChallenge, {bool limited = false}) async {
     Future<http.Response> get() => limited ? _limit(() => _client.get(url)) : _client.get(url);
+    String ok(String body) {
+      _lastOk = DateTime.now();
+      return body;
+    }
 
     final signInsBefore = _signIns;
     var resp = await get();
     var body = resp.body;
-    if (_isJson(resp.statusCode, resp.headers, body)) return body;
+    if (_isJson(resp.statusCode, resp.headers, body)) return ok(body);
+    // Signed in a moment ago, so "forbidden" or "not found" is about this
+    // tool (not used in the course, or closed to students), not the session.
+    if (_refused(resp, url) && _lastOk != null && DateTime.now().difference(_lastOk!) < const Duration(minutes: 5)) {
+      throw LmsUnavailableException(url.path);
+    }
 
     final pending = _signingIn;
     if (pending != null || _signIns != signInsBefore) {
@@ -425,7 +540,7 @@ class LmsService {
       await pending;
       resp = await get();
       body = resp.body;
-      if (_isJson(resp.statusCode, resp.headers, body)) return body;
+      if (_isJson(resp.statusCode, resp.headers, body)) return ok(body);
     } else {
       debugLog('xSiTe: not signed in (status ${resp.statusCode}, at ${resp.request?.url.path}); signing in');
       // Waiters only need to know it's over; this request reports any error.
@@ -439,12 +554,26 @@ class LmsService {
         done.complete();
       }
       body = resp.body;
-      if (_isJson(resp.statusCode, resp.headers, body)) return body;
+      if (_isJson(resp.statusCode, resp.headers, body)) return ok(body);
     }
+    // Still refused after signing in: the tool isn't available, not the session.
+    if (_refused(resp, url)) throw LmsUnavailableException(url.path);
 
     final landed = resp.request?.url;
     throw SessionExpiredException(
         "xSiTe didn't sign in${landed == null ? '' : ' (ended on ${landed.host}${landed.path})'}.");
+  }
+
+  /// When xSiTe last answered with data, i.e. was certainly signed in.
+  DateTime? _lastOk;
+
+  /// A 403/404 from the address asked for itself (not a sign-in page).
+  static bool _refused(http.Response resp, Uri url) {
+    final landed = resp.request?.url;
+    return (resp.statusCode == 403 || resp.statusCode == 404) &&
+        landed != null &&
+        landed.host == url.host &&
+        landed.path == url.path;
   }
 
   static bool _isJson(int status, Map<String, String> headers, String body) {
