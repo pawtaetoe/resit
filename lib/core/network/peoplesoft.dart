@@ -207,6 +207,10 @@ class PeopleSoftPage {
 
   /// Sets a form field for the next [press] without sending anything.
   void setField(String name, String value) => _form[name] = value;
+
+  /// Drops form fields carried from earlier presses, e.g. a previous grid
+  /// row's selection that would otherwise be sent again with the next one.
+  void removeFields(bool Function(String name) test) => _form.removeWhere((name, _) => test(name));
 }
 
 /// Collects what a browser would submit for the inputs in [scope] into

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -7,6 +9,7 @@ import 'package:resit/core/network/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
+import 'package:resit/features/common/data/private_store.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -46,7 +49,11 @@ class _FakeExams {
   final continues = <int>[];
   var _state = 1;
 
-  _FakeExams(this.terms, this.released);
+  /// Like the real in4SIT: a row selection left in the form from an earlier
+  /// visit (`N_EX_PRVRSL_TBL$sels$<row>$$0`) wins over the new radio value.
+  final bool staleSelectionWins;
+
+  _FakeExams(this.terms, this.released, {this.staleSelectionWins = false});
 
   http.Response? handle(http.Request request) {
     if (request.url.path != ExamService.pageUrl.path) return null;
@@ -62,7 +69,11 @@ class _FakeExams {
       case ExamService.viewAction:
         return http.Response(_ajax(_termList(terms), _state), 200, request: request);
       case ExamService.continueAction:
-        final row = int.parse(fields[ExamService.termRadio]!);
+        var row = int.parse(fields[ExamService.termRadio]!);
+        if (staleSelectionWins) {
+          final picked = fields.keys.where((k) => RegExp(r'^N_EX_PRVRSL_TBL\$sels\$\d+\$\$0$').hasMatch(k)).toList();
+          if (picked.isNotEmpty) row = int.parse(fields[picked.first]!);
+        }
         continues.add(row);
         return http.Response(_ajax(_slip(row, released: released.contains(row)), _state), 200, request: request);
     }
@@ -129,6 +140,50 @@ void main() {
     await service.clear();
     expect(await service.saved(), isNull);
     expect(await exams.slips.slip('2025/26 Trimester 1'), isNull);
+    auth.dispose();
+  });
+
+  test('each term gets its own slip even when an earlier row selection is still in the form', () async {
+    final fake = _FakeExams(3, {0, 1, 2}, staleSelectionWins: true);
+    final auth = AuthService(
+        SessionClient(MockClient((r) async => fake.handle(r) ?? http.Response('nf', 404, request: r))), SecureStorage());
+    final record = await AcademicRecordService(ExamService(auth)).load(force: true);
+    expect(fake.continues, [2, 1, 0], reason: 'each term read is for that term');
+    expect(record!.terms.map((t) => t.name),
+        ['AY 2025/26 Trimester 1', 'AY 2025/26 Trimester 2', 'AY 2025/26 Trimester 3']);
+    expect(record.terms.every((t) => t.creditsEarned == 6), isTrue);
+    auth.dispose();
+  });
+
+  test('a slip saved under the wrong term (by an older version) is dropped and read again', () async {
+    final store = ExamSlipStore();
+    // A Trimester 2 slip, saved as if it were Trimester 1's.
+    final wrong = parseExamResults(_ajax(_slip(1), 1), const ExamTerm(index: 0, name: '2025/26 Trimester 1'));
+    await store.save(wrong);
+    expect(await store.slip('2025/26 Trimester 1'), isNull, reason: 'not kept: its heading names another term');
+    expect(slipMatchesTerm('AY 2025/26 Trimester 2', '2025/26 Trimester 2'), isTrue);
+    expect(slipMatchesTerm('AY 2025/26 Trimester 2', '2025/26 Trimester 1'), isFalse);
+    expect(slipMatchesTerm('', '2025/26 Trimester 1'), isTrue);
+  });
+
+  test('a saved record with the same term twice is rebuilt instead of kept for the day', () async {
+    final fake = _FakeExams(2, {0, 1});
+    final auth = AuthService(
+        SessionClient(MockClient((r) async => fake.handle(r) ?? http.Response('nf', 404, request: r))), SecureStorage());
+    final service = AcademicRecordService(ExamService(auth));
+    await service.load(force: true);
+    final good = (await service.saved())!;
+    // Write a mixed-up copy (Trimester 2 twice), fetched just now.
+    final mixed = AcademicRecord(
+      creditsEarned: 6,
+      creditsInProgress: 0,
+      coursesPassed: 1,
+      fetchedAt: DateTime.now(),
+      terms: [good.terms.last, good.terms.last],
+    );
+    await PrivateStore().write('academic_record', jsonEncode(mixed.toJson()));
+    final reloaded = await service.load();
+    expect(reloaded!.terms.map((t) => t.name).toSet(), hasLength(2));
     auth.dispose();
   });
 

@@ -231,7 +231,13 @@ class AcademicRecordService {
   Future<AcademicRecord?> _load(bool force) async {
     final cached = await saved();
     // A record saved before per-term data existed is re-read once.
-    final fresh = cached != null && DateTime.now().difference(cached.fetchedAt) < maxAge && cached.terms.isNotEmpty;
+    // A record with the same term twice came from slips mixed up by an
+    // earlier version: read it again rather than keep it for the day.
+    final mixedUp = cached != null && cached.terms.map((t) => t.name).toSet().length != cached.terms.length;
+    final fresh = cached != null &&
+        DateTime.now().difference(cached.fetchedAt) < maxAge &&
+        cached.terms.isNotEmpty &&
+        !mixedUp;
     if (!force && fresh) return cached;
     try {
       final terms = await exams.terms(); // newest first
