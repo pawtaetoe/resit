@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/auth/auth_service.dart';
@@ -197,14 +199,24 @@ class SessionController extends StateNotifier<SessionState> {
 
       state = SessionState(phase: SessionPhase.signingIn, log: log);
       addLog(force ? 'Signing in afresh...' : 'Saved session has expired, signing in again...');
-      final ok = await _auth.login(
-        username,
-        password,
-        onLog: addLog,
-        onMfaChallenge: (challenge) {
-          if (mounted) state = state.copyWith(challenge: challenge, log: List.of(log));
-        },
-      );
+      Future<bool> attempt() => _auth.login(
+            username,
+            password,
+            onLog: addLog,
+            onMfaChallenge: (challenge) {
+              if (mounted) state = state.copyWith(challenge: challenge, log: List.of(log));
+            },
+          );
+      bool ok;
+      try {
+        ok = await attempt();
+      } on TimeoutException catch (e) {
+        // SIT's sign-in server sometimes stalls on one request; a fresh
+        // attempt usually goes straight through. Retry once before failing.
+        if (stopped()) return false;
+        addLog('A sign-in step timed out ($e); trying once more...');
+        ok = await attempt();
+      }
       if (stopped()) return false;
       if (!ok) {
         state = SessionState(

@@ -13,6 +13,8 @@ import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
+import 'package:resit/features/lms/data/lms_activities.dart';
+import 'package:resit/features/lms/presentation/course_sections.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Opens [url] in the browser (xSiTe pages need its full web app).
@@ -65,7 +67,9 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
       _error = null;
     });
     final service = ref.read(lmsServiceProvider);
-    Future<List<LmsCourse>> fetch() => service.courses(force: refresh, onMfaChallenge: (c) {
+    Future<List<LmsCourse>> fetch() => service.courses(
+        force: refresh,
+        onMfaChallenge: (c) {
           if (mounted) setState(() => _challenge = c);
         });
     try {
@@ -100,7 +104,8 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
               ),
             ),
             const SizedBox(width: 8),
-            ThumbIconButton(tooltip: 'Refresh', icon: Icons.refresh, onPressed: _loading ? null : () => _load(refresh: true)),
+            ThumbIconButton(
+                tooltip: 'Refresh', icon: Icons.refresh, onPressed: _loading ? null : () => _load(refresh: true)),
           ],
         ),
       ),
@@ -156,6 +161,8 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, Space.section),
               children: [
+                // Deadlines across this term's courses, soonest first.
+                _TermDueSoon(courses: groups[terms.first]!),
                 for (final term in terms) ...[
                   SectionLabel(term == terms.first ? '$term · this term' : term),
                   for (final c in groups[term]!)
@@ -207,7 +214,8 @@ class _CourseCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(course.courseCode, style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary)),
+                    Text(course.courseCode,
+                        style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary)),
                     Text(course.title, style: theme.textTheme.titleSmall),
                     const SizedBox(height: 6),
                     if (p != null && p.required > 0) ...[
@@ -249,7 +257,10 @@ class _CourseImage extends ConsumerWidget {
       alignment: Alignment.center,
       child: Text(
         course.courseCode.replaceAll(RegExp(r'\d'), ''),
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(color: scheme.onPrimaryContainer, fontWeight: FontWeight.bold),
+        style: Theme.of(context)
+            .textTheme
+            .labelLarge
+            ?.copyWith(color: scheme.onPrimaryContainer, fontWeight: FontWeight.bold),
       ),
     );
     // Decoded at the size it's shown, not the size it was sent.
@@ -272,20 +283,18 @@ class _CourseImage extends ConsumerWidget {
   }
 }
 
-/// One course: how much is done, then its content folder by folder, as on
-/// xSiTe. "To do" (the default) hides what's already done. Items open in the
-/// browser: links at their own address, files on xSiTe.
-class CourseScreen extends ConsumerStatefulWidget {
+/// A course's content, folder by folder, as on xSiTe, with how much is done. Done items stay listed (ticked and dimmed) so they can be opened
+/// again. Items open in the browser: links at their own address, files on
+/// xSiTe.
+class CourseContentScreen extends ConsumerStatefulWidget {
   final LmsCourse course;
-  const CourseScreen({super.key, required this.course});
+  const CourseContentScreen({super.key, required this.course});
 
   @override
-  ConsumerState<CourseScreen> createState() => _CourseScreenState();
+  ConsumerState<CourseContentScreen> createState() => _CourseContentScreenState();
 }
 
-class _CourseScreenState extends ConsumerState<CourseScreen> {
-  bool _todoOnly = true;
-
+class _CourseContentScreenState extends ConsumerState<CourseContentScreen> {
   LmsCourse get course => widget.course;
 
   Future<void> _refresh() async {
@@ -318,7 +327,8 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
               tone: Tone.danger,
               title: "Couldn't load this course",
               message: friendlyError(error),
-              action: FilledButton.icon(onPressed: _refresh, icon: const Icon(Icons.refresh), label: const Text('Try again')),
+              action: FilledButton.icon(
+                  onPressed: _refresh, icon: const Icon(Icons.refresh), label: const Text('Try again')),
             )
           : const MessageView(
               icon: Icons.menu_book_outlined,
@@ -326,10 +336,9 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
               action: SizedBox(width: 160, child: LinearProgressIndicator()),
             );
     } else {
-      final shown = [
-        for (final m in modules)
-          if (!_todoOnly || m.allTopics.any((t) => !isDone(t))) m,
-      ];
+      // Everything stays listed: done items are ticked, not removed, so
+      // something already read is still there to open again.
+      final shown = modules;
       body = RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
@@ -339,16 +348,15 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
             if (p != null) _ProgressCard(course: course, progress: p),
             const SizedBox(height: 12),
             if (shown.isEmpty)
-              MessageView(
+              const MessageView(
                 icon: Icons.task_alt,
                 tone: Tone.success,
-                title: _todoOnly ? 'All caught up' : 'No content yet',
-                message: _todoOnly ? "You've opened everything in this course." : null,
+                title: 'No content yet',
               ),
             for (final m in shown)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: _ModuleCard(module: m, isDone: isDone, todoOnly: _todoOnly),
+                child: _ModuleCard(module: m, isDone: isDone),
               ),
           ],
         ),
@@ -356,28 +364,12 @@ class _CourseScreenState extends ConsumerState<CourseScreen> {
     }
 
     return Scaffold(
-      appBar: thumbAppBar(course.courseCode, subtitle: course.title),
+      appBar: thumbAppBar('Content', subtitle: '${course.courseCode} · ${course.title}'),
       bottomNavigationBar: ThumbBar(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: ThumbToggle<bool>(
-                options: const [
-                  ThumbToggleOption(true, 'To do', icon: Icons.radio_button_unchecked),
-                  ThumbToggleOption(false, 'All', icon: Icons.list),
-                ],
-                selected: _todoOnly,
-                onChanged: (v) => setState(() => _todoOnly = v),
-              ),
-            ),
-            const SizedBox(width: 8),
-            ThumbIconButton(
-              tooltip: 'Open course in xSiTe',
-              icon: Icons.open_in_new,
-              onPressed: () => openInBrowser(context, course.homeUrl),
-            ),
-          ],
+        child: FilledButton.tonalIcon(
+          onPressed: () => openInBrowser(context, Uri.parse('${LmsService.base}/d2l/le/content/${course.orgUnitId}/Home')),
+          icon: const Icon(Icons.open_in_new),
+          label: const Text('Open in xSiTe', overflow: TextOverflow.ellipsis),
         ),
       ),
       body: body,
@@ -416,12 +408,12 @@ class _ProgressCard extends StatelessWidget {
 }
 
 /// A top-level folder: its name, how much of it is done, and its items,
-/// with sub-folders as headings. Starts open if anything in it is left to do.
+/// with sub-folders as headings. Starts open if anything in it is left to do;
+/// a finished folder starts closed but is still there to open.
 class _ModuleCard extends StatelessWidget {
   final ContentModule module;
   final bool Function(ContentTopic) isDone;
-  final bool todoOnly;
-  const _ModuleCard({required this.module, required this.isDone, required this.todoOnly});
+  const _ModuleCard({required this.module, required this.isDone});
 
   @override
   Widget build(BuildContext context) {
@@ -430,22 +422,20 @@ class _ModuleCard extends StatelessWidget {
     final done = all.where(isDone).length;
 
     List<Widget> rows(ContentModule m, int depth) => [
-          for (final t in m.topics)
-            if (!todoOnly || !isDone(t)) _TopicTile(topic: t, done: isDone(t)),
-          for (final sub in m.modules)
-            if (!todoOnly || sub.allTopics.any((t) => !isDone(t))) ...[
-              Padding(
-                padding: EdgeInsets.fromLTRB(16.0 + depth * 12, 12, 16, 4),
-                child: Row(
-                  children: [
-                    Icon(Icons.folder_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(sub.title, style: theme.textTheme.labelLarge)),
-                  ],
-                ),
+          for (final t in m.topics) _TopicTile(topic: t, done: isDone(t)),
+          for (final sub in m.modules) ...[
+            Padding(
+              padding: EdgeInsets.fromLTRB(16.0 + depth * 12, 12, 16, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.folder_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(sub.title, style: theme.textTheme.labelLarge)),
+                ],
               ),
-              ...rows(sub, depth + 1),
-            ],
+            ),
+            ...rows(sub, depth + 1),
+          ],
         ];
 
     return Card(
@@ -485,13 +475,52 @@ class _TopicTile extends StatelessWidget {
     return ListTile(
       leading: Icon(_icon, color: done ? muted : theme.colorScheme.primary),
       title: Text(topic.title, style: done ? TextStyle(color: muted) : null),
-      subtitle: topic.description.isEmpty
-          ? null
-          : Text(topic.description, maxLines: 3, overflow: TextOverflow.ellipsis),
+      subtitle:
+          topic.description.isEmpty ? null : Text(topic.description, maxLines: 3, overflow: TextOverflow.ellipsis),
       trailing: done
           ? Icon(Icons.check_circle, color: theme.colorScheme.primary, semanticLabel: 'Done')
           : Icon(Icons.open_in_new, size: 18, color: muted),
       onTap: () => openInBrowser(context, topic.openUrl),
+    );
+  }
+}
+
+/// "Due soon" across this term's courses: each course's assignments and
+/// quizzes are read side by side (a few requests at a time), and deadlines
+/// show as they arrive. Hidden when nothing is due.
+class _TermDueSoon extends ConsumerWidget {
+  final List<LmsCourse> courses;
+  const _TermDueSoon({required this.courses});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final now = DateTime.now();
+    final items = <DueItem>[];
+    var loading = 0;
+    for (final c in courses) {
+      final due = ref.watch(lmsCourseDueProvider((id: c.orgUnitId, code: c.courseCode)));
+      if (due.isLoading && !due.hasValue) loading++;
+      items.addAll(due.valueOrNull ?? const []);
+    }
+    items.sort((a, b) => a.due.compareTo(b.due));
+    if (items.isEmpty && loading == 0) return const SizedBox.shrink();
+    final shown = items.take(5).toList();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.section - Space.card),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionLabel(loading > 0 ? 'Due soon · checking ${courses.length - loading} of ${courses.length}' : 'Due soon'),
+          for (final d in shown) DueTile(item: d, now: now),
+          if (items.length > shown.length)
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: Space.card),
+              child: Text('+${items.length - shown.length} more in the courses below',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            ),
+          if (shown.isEmpty) const Padding(padding: EdgeInsets.only(bottom: Space.card), child: LinearProgressIndicator()),
+        ],
+      ),
     );
   }
 }
