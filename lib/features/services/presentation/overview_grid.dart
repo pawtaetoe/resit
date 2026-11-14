@@ -13,7 +13,7 @@ import 'package:resit/features/exams/presentation/academic_progress_screen.dart'
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The Home dashboard: countdowns from SIT's academic calendar, credits and
-/// GPA from the result slips, and days to graduation. Each tile opens where
+/// GPA from the result slips, and days to freedom (the last day of finals). Each tile opens where
 /// its number comes from.
 class OverviewGrid extends ConsumerWidget {
   const OverviewGrid({super.key});
@@ -40,11 +40,11 @@ class OverviewGrid extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('When do you graduate?', style: theme.textTheme.titleLarge),
+                Text('When do you finish?', style: theme.textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(
-                  'Pick the year. The countdown runs to the last day of finals in Trimester 3 that year '
-                  '(July or August), from SIT\'s academic calendar.',
+                  'Pick the year of your last trimester. The countdown runs to the last day of finals in '
+                  'Trimester 3 that year (July or August), from SIT\'s academic calendar.',
                   style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: Space.page),
@@ -78,8 +78,9 @@ class OverviewGrid extends ConsumerWidget {
     final choice = await showChoiceSheet<String>(
       context,
       icon: Icons.workspace_premium_outlined,
-      title: 'Graduating in $year',
-      message: 'Counting down to ${DateFormat('EEEE d MMMM yyyy').format(date)}, the last day of Trimester 3 finals'
+      title: 'Finishing in $year',
+      message: 'Counting down to ${DateFormat('EEEE d MMMM yyyy').format(date)}, your last day of finals '
+          '(the end of Trimester 3 finals)'
           '${estimated ? ' (estimated: SIT\'s calendar doesn\'t list $year yet)' : ''}.',
       choices: const [
         SheetChoice('change', 'Change year', icon: Icons.edit_calendar_outlined, primary: true),
@@ -243,7 +244,7 @@ class OverviewGrid extends ConsumerWidget {
               child: TextButton.icon(
                 onPressed: () => _setGraduation(context, ref, null),
                 icon: const Icon(Icons.workspace_premium_outlined),
-                label: const Text('Set your graduation year for a countdown'),
+                label: const Text('Set your final year for a countdown to freedom'),
               ),
             ),
           ],
@@ -268,7 +269,7 @@ DateTime _programmeStart(String? admitTerm, DateTime graduation) {
   return DateTime(graduation.year - 3, 9, 1);
 }
 
-/// Days to graduation in the middle of a ring that fills as time passes,
+/// Days to freedom (the last day of finals) in the middle of a ring that fills as time passes,
 /// from the start of the programme to graduation day.
 class GraduationRing extends StatelessWidget {
   final DateTime date;
@@ -295,13 +296,13 @@ class GraduationRing extends StatelessWidget {
     final done = total <= 0 ? 1.0 : (today.difference(start).inDays / total).clamp(0.0, 1.0);
     final ringSize = MediaQuery.textScalerOf(context).scale(96).clamp(96.0, 140.0);
     final caption = days <= 0
-        ? 'Graduation day!'
-        : '${(done * 100).round()}% of the way · ${DateFormat('EEE d MMM yyyy').format(date)}'
+        ? 'Finals are over!'
+        : '${(done * 100).round()}% of the way · last final ${DateFormat('EEE d MMM yyyy').format(date)}'
             '${estimated ? ' (estimated)' : ''}';
 
     return Semantics(
       button: true,
-      label: days <= 0 ? 'Graduation day' : '$days days to graduation, $caption',
+      label: days <= 0 ? 'Finals are over' : '$days days to freedom, $caption',
       excludeSemantics: true,
       child: TintedCard(
         color: scheme.primaryContainer,
@@ -340,7 +341,7 @@ class GraduationRing extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('to graduation', style: theme.textTheme.titleMedium?.copyWith(color: fg)),
+                  Text('to freedom', style: theme.textTheme.titleMedium?.copyWith(color: fg)),
                   const SizedBox(height: 4),
                   Text(caption, style: theme.textTheme.bodySmall?.copyWith(color: fg)),
                 ],

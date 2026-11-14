@@ -204,12 +204,23 @@ class ExamSlipStore {
     });
   }
 
-  /// The kept released slip for the term named [termName], if any.
-  Future<ExamResults?> slip(String termName) async => (await _load()).slips[termName];
+  /// The kept released slip for the term named [termName], if any. A kept
+  /// slip whose heading names another term (saved by an earlier version that
+  /// could mix terms up) is dropped, so it's read again.
+  Future<ExamResults?> slip(String termName) async {
+    final data = await _load();
+    final s = data.slips[termName];
+    if (s != null && !slipMatchesTerm(s.heading, termName)) {
+      data.slips.remove(termName);
+      await _save();
+      return null;
+    }
+    return s;
+  }
 
-  /// Keeps [slip] if it is released.
+  /// Keeps [slip] if it is released and is for its own term.
   Future<void> save(ExamResults slip) async {
-    if (!slip.released) return;
+    if (!slip.released || !slipMatchesTerm(slip.heading, slip.term.name)) return;
     (await _load()).slips[slip.term.name] = slip;
     await _save();
   }
@@ -329,6 +340,9 @@ class ExamService {
       final ({String body, ExamSlipReply data}) reply;
       try {
         _listed = null;
+        // Only this term's row is picked: a row picked on an earlier visit
+        // stays in the form, and in4SIT would show that term's slip instead.
+        _page!.removeFields((name) => name.startsWith(r'N_EX_PRVRSL_TBL$sels$'));
         reply = await _page!.pressWith(continueAction, readExamSlip, fields: {
           termRadio: '${row.index}',
           'N_EX_PRVRSL_TBL\$sels\$${row.index}\$\$0': '${row.index}',
@@ -341,6 +355,15 @@ class ExamService {
       if (!reply.data.isSlip && !opened && attempt == 0) {
         auth.note('Exam results: the kept page was gone; reopening');
         _page?.close();
+        continue;
+      }
+      // A slip for another term (its heading names a different one): read
+      // it again on a freshly opened page rather than keep the wrong one.
+      if (reply.data.isSlip && !slipMatchesTerm(reply.data.results.heading, term.name)) {
+        auth.note('Exam results: asked for ${term.name}, got ${reply.data.results.heading}');
+        _page?.close();
+        _page = null;
+        if (attempt > 0) throw Exception('in4SIT showed the slip for another term.');
         continue;
       }
       return reply.data.results.withTerm(term);
@@ -383,6 +406,15 @@ class ExamService {
     debugLog('Exam results: ${list.terms.length} terms');
     return _listed = list.terms;
   }
+}
+
+/// Whether a slip's heading ("AY 2025/26 Trimester 3") is for the term named
+/// [termName] ("2025/26 Trimester 3"). An empty heading can't be checked and
+/// counts as a match.
+bool slipMatchesTerm(String heading, String termName) {
+  String norm(String s) => s.replaceFirst(RegExp(r'^\s*AY\s*', caseSensitive: false), '').replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+  final h = norm(heading);
+  return h.isEmpty || termName.trim().isEmpty || h == norm(termName);
 }
 
 /// The term list on a parsed page, and a description of the page when it
