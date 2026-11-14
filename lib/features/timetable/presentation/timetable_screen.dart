@@ -13,6 +13,7 @@ import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
+import 'package:resit/features/timetable/data/module_colours.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
@@ -78,6 +79,16 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       _page = _initialPage + (monday.difference(thisMonday).inHours / (24 * 7)).round();
     }
     _pageController = PageController(initialPage: _page);
+    _colourStore.load().then((saved) {
+      if (!mounted) return;
+      setState(() {
+        _colours = saved;
+        // Weeks that arrived before the saved colours did.
+        for (final w in _weeks.values) {
+          _colourModules(w.sessions);
+        }
+      });
+    });
   }
 
   // Weeks are fetched one at a time (the server keeps the page state) and
@@ -118,7 +129,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       if (force) service.reset();
       final week = await (prefetch ? service.week(monday) : withSignInRetry(ref, fetch, beforeRetry: service.reset));
       if (!mounted) return;
-      setState(() => _weeks[monday] = week);
+      setState(() {
+        _weeks[monday] = week;
+        _colourModules(week.sessions);
+      });
       // Swiping on is the likely next step: fetch the following week behind
       // this one (in4SIT takes one request at a time, so it just queues).
       if (!prefetch) {
@@ -160,7 +174,20 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     );
   }
 
-  Color _courseColor(String code) => _courseColors[code.hashCode.abs() % _courseColors.length];
+  /// Module → colour, kept on the device so each module keeps its colour.
+  Map<String, int> _colours = {};
+  final _colourStore = ModuleColourStore();
+
+  /// Gives the modules in [sessions] a colour if they don't have one yet.
+  void _colourModules(Iterable<ClassSession> sessions) {
+    final updated = assignModuleColours(_colours, sessions.map((s) => s.courseCode), _courseColors.length);
+    if (updated.length == _colours.length) return;
+    _colours = updated;
+    _colourStore.save(updated);
+  }
+
+  Color _courseColor(String code) =>
+      _courseColors[(_colours[moduleKey(code)] ?? code.hashCode.abs()) % _courseColors.length];
 
   /// Lays out one day's sessions side by side where they overlap in time.
   List<_PlacedSession> _layoutDay(List<ClassSession> sessions) {
@@ -400,6 +427,32 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       return Column(
         children: [
           Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: header),
+          // Which colour is which module this week.
+          if (sessions.isNotEmpty)
+            SizedBox(
+              height: 28,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  for (final code in {for (final s in sessions) s.courseCode}.toList()..sort())
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(color: _courseColor(code), borderRadius: BorderRadius.circular(3)),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(code, style: small?.copyWith(color: scheme.onSurface)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
           const Divider(height: 1),
           Expanded(
             child: Stack(
