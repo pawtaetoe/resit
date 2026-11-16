@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -8,6 +7,7 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
+import 'package:resit/sites/xsite/request_limiter.dart';
 import 'package:resit/sites/xsite/xsite_parsers.dart';
 
 /// Reads xSiTe with the same SIT single sign-on as in4SIT: xSiTe hands off
@@ -65,7 +65,7 @@ class LmsService {
   final DateTime Function() _now;
   ({DateTime at, List<LmsCourse> courses})? _courses;
   Future<List<LmsCourse>>? _coursesInFlight;
-  late final _Limiter _limit = _Limiter(maxInFlight);
+  late final RequestLimiter _limit = RequestLimiter(maxInFlight);
 
   /// The xSiTe sign-in under way, shared by every request that finds xSiTe
   /// signed out meanwhile.
@@ -323,34 +323,5 @@ class LmsService {
     final type = headers['content-type'] ?? '';
     final t = stripGuard(body);
     return type.contains('json') || t.startsWith('{') || t.startsWith('[');
-  }
-}
-
-/// Lets at most [max] tasks run at once; the rest wait their turn.
-class _Limiter {
-  final int max;
-  var _running = 0;
-  final _waiting = Queue<Completer<void>>();
-
-  _Limiter(this.max);
-
-  Future<T> call<T>(Future<T> Function() task) async {
-    if (_running >= max) {
-      final turn = Completer<void>();
-      _waiting.add(turn);
-      await turn.future;
-    } else {
-      _running++;
-    }
-    try {
-      return await task();
-    } finally {
-      // Hand the slot straight to the next in line, or free it.
-      if (_waiting.isNotEmpty) {
-        _waiting.removeFirst().complete();
-      } else {
-        _running--;
-      }
-    }
   }
 }
