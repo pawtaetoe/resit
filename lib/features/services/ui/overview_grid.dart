@@ -15,7 +15,7 @@ import 'package:resit/features/exams/ui/academic_progress_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The Home dashboard: countdowns from SIT's academic calendar, credits and
-/// GPA from the result slips, and days to freedom (the last day of finals). Each tile opens where
+/// GPA from the result slips, and days to the last day of school (the last day of finals). Each tile opens where
 /// its number comes from.
 class OverviewGrid extends ConsumerWidget {
   const OverviewGrid({super.key});
@@ -246,7 +246,7 @@ class OverviewGrid extends ConsumerWidget {
               child: TextButton.icon(
                 onPressed: () => _setGraduation(context, ref, null),
                 icon: const Icon(Icons.workspace_premium_outlined),
-                label: const Text('Set your final year for a countdown to freedom'),
+                label: const Text('Set your final year for a countdown to your last day of school'),
               ),
             ),
           ],
@@ -271,7 +271,7 @@ DateTime _programmeStart(String? admitTerm, DateTime graduation) {
   return DateTime(graduation.year - 3, 9, 1);
 }
 
-/// Days to freedom (the last day of finals) in the middle of a ring that fills as time passes,
+/// Days to the last day of school (the last day of finals) in the middle of a ring that fills as time passes,
 /// from the start of the programme to graduation day.
 class GraduationRing extends StatelessWidget {
   final DateTime date;
@@ -304,7 +304,7 @@ class GraduationRing extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: days <= 0 ? 'Finals are over' : '$days days to freedom, $caption',
+      label: days <= 0 ? 'Finals are over' : '$days days to the last day of school, $caption',
       excludeSemantics: true,
       child: TintedCard(
         color: scheme.primaryContainer,
@@ -343,7 +343,7 @@ class GraduationRing extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('to freedom', style: theme.textTheme.titleMedium?.copyWith(color: fg)),
+                  Text('to last day of school', style: theme.textTheme.titleMedium?.copyWith(color: fg)),
                   const SizedBox(height: 4),
                   Text(caption, style: theme.textTheme.bodySmall?.copyWith(color: fg)),
                 ],
