@@ -1,6 +1,6 @@
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
-import 'package:resit/sites/in4sit/peoplesoft.dart';
+import 'package:resit/sites/in4sit/peoplesoft_parsers.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
 
 // Reading in4SIT's "Weekly Calendar View" page into the app's models: the
