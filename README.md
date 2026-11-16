@@ -80,9 +80,10 @@ On a desktop window, reSIT is laid out like a desktop app:
 | Requests from the device to in4SIT's site | **47** | **1** |
 | Data transferred | **278 kB** | **13 kB** (about 21× less) |
 | Scripts, styles and images to unpack and run | **2.8 MB** | none |
-| Loading it, then reloading once | **133 requests, 354 kB**, 8.6 MB to run | **1 request, 13 kB** (the reopen uses the saved copy) |
-| …of which pages with content | **3** (35 kB): the timetable twice, plus PeopleSoft's wrapper page | **1** (13 kB) |
-| Pages in4SIT has to build for that reload | **2** (wrapper and timetable, about 0.8 s of server time) | **0** |
+| Reloading it | **86 requests, 76 kB**, 5.8 MB to run, 3.3 s | **0 requests** (saved copy) |
+| Pages in4SIT builds for that reload | **2** (PeopleSoft's wrapper page and the timetable) | **0** |
+
+A reload costs more than the first load because it also reloads PeopleSoft's wrapper page and its files. Across both loads, only 3 of 133 requests were pages with content (35 of 354 kB).
 
 Only 1 of the browser's 47 requests is the timetable itself (the 13 kB `SSR_SSENRL` page, the same one reSIT asks for). The other 46 are PeopleSoft scripts, stylesheets and images. in4SIT sits behind a web firewall and cache (Imperva), which can answer some of those files itself, so these numbers measure what the student's device sends and downloads, not exactly what reaches SIT's servers. The page that does reach in4SIT's application is the timetable page, and reSIT asks for it once and then not again until it refreshes. The first visit to each week can take reSIT 1–2 extra requests (switching in4SIT to the weekly view, or signing in again after a timeout).
 
