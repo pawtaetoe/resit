@@ -1,5 +1,5 @@
 name: resit
-description: "A new scalable Flutter project for SIT."
+description: "reSIT: one app for SIT timetable, xSiTe, results and room booking."
 publish_to: 'none'
 
 version: 1.0.14+17
