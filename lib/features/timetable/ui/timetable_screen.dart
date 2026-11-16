@@ -19,7 +19,8 @@ import 'package:resit/features/timetable/data/module_colours.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
-import 'package:resit/features/timetable/ui/class_details_sheet.dart';
+import 'package:resit/features/timetable/ui/course_palette.dart';
+import 'package:resit/features/timetable/ui/week_grid.dart';
 import 'package:resit/features/timetable/ui/week_grid_layout.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
@@ -51,25 +52,9 @@ class _Timetable extends ConsumerStatefulWidget {
   ConsumerState<_Timetable> createState() => _TimetableScreenState();
 }
 
-/// Course colours: eight hues that sit with the logo's navy and teal, all
-/// dark enough for white text (at least 5.9:1). A course keeps its colour.
-const _courseColors = [
-  Color(0xFF2B5DA8), // blue
-  Color(0xFF0B6E78), // teal
-  Color(0xFF2E7048), // green
-  Color(0xFF6447A8), // purple
-  Color(0xFF963A6A), // plum
-  Color(0xFF9A4A0C), // amber
-  Color(0xFF45607A), // slate
-  Color(0xFF3B47A0), // indigo
-];
-
 class _TimetableScreenState extends ConsumerState<_Timetable> {
   // The week pager is "infinite": page 1000 is the current week.
   static const _initialPage = 1000;
-
-  /// An hour's height: grows with the user's text size, so class text fits.
-  double get _hourHeight => MediaQuery.textScalerOf(context).scale(60).clamp(60.0, 132.0);
 
   late final PageController _pageController;
   late int _page;
@@ -202,212 +187,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
 
   /// Gives the modules in [sessions] a colour if they don't have one yet.
   void _colourModules(Iterable<ClassSession> sessions) {
-    final updated = assignModuleColours(_colours, sessions.map((s) => s.courseCode), _courseColors.length);
+    final updated = assignModuleColours(_colours, sessions.map((s) => s.courseCode), CoursePalette.colours.length);
     if (updated.length == _colours.length) return;
     _colours = updated;
     _colourStore.save(updated);
-  }
-
-  Color _courseColor(String code) =>
-      _courseColors[(_colours[moduleKey(code)] ?? code.hashCode.abs()) % _courseColors.length];
-
-  Widget _buildGrid(DateTime monday, WeekSchedule? week) {
-    final today = DateTime.now();
-    final sessions = week?.sessions ?? const <ClassSession>[];
-
-    final layout = WeekGridLayout.fit(sessions, hourHeight: _hourHeight);
-
-    return LayoutBuilder(builder: (context, constraints) {
-      final colWidth = (constraints.maxWidth - WeekGridLayout.timeColumnWidth) / WeekGridLayout.dayCount;
-      final theme = Theme.of(context);
-      final scheme = theme.colorScheme;
-      final small = theme.textTheme.labelSmall;
-      final muted = scheme.onSurfaceVariant;
-      final nowDate = DateTime(today.year, today.month, today.day);
-      final todayIndex = nowDate.difference(monday).inDays;
-      final nowMin = today.hour * 60 + today.minute;
-      final showNow = todayIndex >= 0 && todayIndex < WeekGridLayout.dayCount && layout.shows(nowMin);
-
-      final header = Row(
-        children: [
-          const SizedBox(width: WeekGridLayout.timeColumnWidth),
-          for (var d = 0; d < WeekGridLayout.dayCount; d++)
-            Builder(builder: (_) {
-              final date = DateTime(monday.year, monday.month, monday.day + d);
-              final isToday = date.year == today.year && date.month == today.month && date.day == today.day;
-              return SizedBox(
-                width: colWidth,
-                child: Column(
-                  children: [
-                    Text(DateFormat('E').format(date), style: small?.copyWith(color: isToday ? scheme.primary : muted)),
-                    const SizedBox(height: 2),
-                    CircleAvatar(
-                      radius: 13,
-                      backgroundColor: isToday ? scheme.primary : Colors.transparent,
-                      child: Text(
-                        '${date.day}',
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: isToday ? scheme.onPrimary : scheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    if (date.day == 1 || d == 0) Text(DateFormat('MMM').format(date), style: small?.copyWith(color: muted)),
-                  ],
-                ),
-              );
-            }),
-        ],
-      );
-
-      final grid = SizedBox(
-        height: layout.height,
-        child: Stack(
-          children: [
-            for (var h = layout.startHour; h <= layout.endHour; h++)
-              Positioned(
-                top: layout.hourTop(h),
-                left: 0,
-                right: 0,
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: WeekGridLayout.timeColumnWidth,
-                      child: Transform.translate(
-                        offset: const Offset(0, -7),
-                        child: Text(
-                          '${h.toString().padLeft(2, '0')}:00',
-                          textAlign: TextAlign.center,
-                          style: small?.copyWith(color: muted),
-                        ),
-                      ),
-                    ),
-                    Expanded(child: Divider(height: 1, color: scheme.outlineVariant)),
-                  ],
-                ),
-              ),
-            for (var d = 0; d < WeekGridLayout.dayCount; d++) ...[
-              if (d > 0)
-                Positioned(
-                  left: WeekGridLayout.timeColumnWidth + d * colWidth,
-                  top: 0,
-                  bottom: 0,
-                  child: VerticalDivider(width: 1, color: scheme.outlineVariant.withValues(alpha: 0.6)),
-                ),
-              if (week != null)
-                for (final placed in WeekGridLayout.placeDay(week.forDay(d)))
-                  Builder(builder: (_) {
-                    final s = placed.session;
-                    final laneWidth = colWidth / placed.laneCount;
-                    final color = _courseColor(s.courseCode);
-                    return Positioned(
-                      left: WeekGridLayout.timeColumnWidth + d * colWidth + placed.lane * laneWidth + 1,
-                      top: layout.minuteTop(s.startMin) + 1,
-                      width: laneWidth - 2,
-                      height: layout.blockHeight(s),
-                      // One node for screen readers, with the tap on it.
-                      child: Semantics(
-                        button: true,
-                        label: '${s.courseCode} ${s.component}, ${s.timeLabel}, ${s.location}'
-                            '${s.coinciding ? ', clashes with another class' : ''}',
-                        excludeSemantics: true,
-                        onTap: () => showClassDetails(context, s),
-                        child: GestureDetector(
-                          excludeFromSemantics: true,
-                          onTap: () => showClassDetails(context, s),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: color,
-                              borderRadius: BorderRadius.circular(6),
-                              // A clash shows as an orange outline and a warning sign.
-                              border: s.coinciding ? Border.all(color: scheme.tertiary, width: 2) : null,
-                            ),
-                            child: Text.rich(
-                              TextSpan(children: [
-                                if (s.coinciding) const TextSpan(text: '⚠ '),
-                                TextSpan(text: '${s.courseCode}\n', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                TextSpan(text: '${s.component}\n${s.location}'),
-                              ]),
-                              overflow: TextOverflow.clip,
-                              style: small?.copyWith(color: Colors.white, height: 1.2, letterSpacing: 0),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
-            ],
-            if (showNow)
-              Positioned(
-                left: WeekGridLayout.timeColumnWidth + todayIndex * colWidth - 4,
-                width: colWidth + 4,
-                top: layout.minuteTop(nowMin) - 4,
-                child: IgnorePointer(
-                  child: Row(
-                    children: [
-                      CircleAvatar(radius: 4, backgroundColor: scheme.error),
-                      Expanded(child: Container(height: 2, color: scheme.error)),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
-      );
-
-      return Column(
-        children: [
-          Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: header),
-          // Which colour is which module this week.
-          if (sessions.isNotEmpty)
-            SizedBox(
-              height: 28,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  for (final code in {for (final s in sessions) s.courseCode}.toList()..sort())
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(color: _courseColor(code), borderRadius: BorderRadius.circular(3)),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(code, style: small?.copyWith(color: scheme.onSurface)),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          const Divider(height: 1),
-          Expanded(
-            child: Stack(
-              children: [
-                // Room at the top so the first hour's label isn't clipped.
-                SingleChildScrollView(padding: const EdgeInsets.only(top: 10, bottom: 8), child: grid),
-                if (week != null && week.sessions.isEmpty)
-                  Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.free_breakfast_outlined, color: muted, size: 32),
-                        const SizedBox(height: 8),
-                        Text('No classes this week', style: theme.textTheme.titleSmall?.copyWith(color: muted)),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      );
-    });
   }
 
   Widget _buildWeekPage(int page) {
@@ -498,7 +281,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       children: [
         RefreshStrip(active: loading || (offline != null && offline.busy)),
         if (banner != null) banner,
-        Expanded(child: _buildGrid(monday, week)),
+        Expanded(child: WeekGrid(monday: monday, week: week, palette: CoursePalette(_colours))),
       ],
     );
   }
