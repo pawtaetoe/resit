@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:resit/features/common/data/private_store.dart';
+import 'package:resit/core/storage/private_store.dart';
 import 'package:resit/features/exams/domain/exam_results.dart';
 
 /// Released result slips, kept encrypted on the device: released slips don't

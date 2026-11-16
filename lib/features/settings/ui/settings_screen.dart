@@ -3,13 +3,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/features/timetable/timetable_providers.dart';
+import 'package:resit/features/calendar/calendar_providers.dart';
+import 'package:resit/features/exams/exams_providers.dart';
+import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/settings/presentation/totp_section.dart';
+import 'package:resit/features/settings/ui/totp_section.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Account tab: the first sign-in, the saved login, sign out, and automatic

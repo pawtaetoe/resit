@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:resit/core/providers.dart';
+import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
@@ -11,7 +11,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
-import 'package:resit/features/lms/presentation/courses_screen.dart';
+import 'package:resit/features/lms/ui/courses_screen.dart';
 import 'package:resit/core/widgets/desktop.dart';
 
 /// xSiTe's own page for one of a course's tools.

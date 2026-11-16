@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:resit/sites/in4sit/timetable_service.dart';
-import 'package:resit/features/common/data/private_store.dart';
+import 'package:resit/core/storage/private_store.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// The classes still to come, read from the in4SIT timetable, with a saved

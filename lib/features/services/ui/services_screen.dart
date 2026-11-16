@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/section_label.dart';
-import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
-import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
-import 'package:resit/features/exams/presentation/exam_results_screen.dart';
-import 'package:resit/features/lms/presentation/courses_screen.dart';
-import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
-import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
-import 'package:resit/features/timetable/presentation/timetable_screen.dart';
+import 'package:resit/features/calendar/ui/academic_calendar_screen.dart';
+import 'package:resit/features/exams/ui/academic_progress_screen.dart';
+import 'package:resit/features/exams/ui/exam_results_screen.dart';
+import 'package:resit/features/lms/ui/courses_screen.dart';
+import 'package:resit/features/room_booking/ui/dashboard_screen.dart';
+import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
+import 'package:resit/features/timetable/ui/timetable_screen.dart';
 
 /// Services tab: one card per task, grouped by what it's for.
 class ServicesScreen extends StatelessWidget {

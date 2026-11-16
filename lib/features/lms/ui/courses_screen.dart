@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
@@ -16,7 +17,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
-import 'package:resit/features/lms/presentation/course_sections.dart';
+import 'package:resit/features/lms/ui/course_sections.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:url_launcher/url_launcher.dart';
 

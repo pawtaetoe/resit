@@ -5,14 +5,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/features/room_booking/room_booking_providers.dart';
+import 'package:resit/features/timetable/timetable_providers.dart';
+import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/room_booking/domain/quota.dart';
-import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
-import 'package:resit/features/services/presentation/overview_grid.dart';
-import 'package:resit/features/timetable/presentation/timetable_screen.dart';
+import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
+import 'package:resit/features/services/ui/overview_grid.dart';
+import 'package:resit/features/timetable/ui/timetable_screen.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// Home: the dashboard. Sign-in status only when there's something to do,

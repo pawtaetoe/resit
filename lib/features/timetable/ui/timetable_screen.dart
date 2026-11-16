@@ -7,6 +7,8 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/features/timetable/timetable_providers.dart';
+import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';

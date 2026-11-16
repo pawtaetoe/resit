@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/features/calendar/calendar_providers.dart';
+import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
-import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
-import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
+import 'package:resit/features/calendar/ui/academic_calendar_screen.dart';
+import 'package:resit/features/exams/ui/academic_progress_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The Home dashboard: countdowns from SIT's academic calendar, credits and

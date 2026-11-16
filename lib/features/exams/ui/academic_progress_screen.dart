@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/charts.dart';
@@ -11,7 +12,7 @@ import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/exams/presentation/exam_results_screen.dart';
+import 'package:resit/features/exams/ui/exam_results_screen.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/features/exams/domain/academic_record.dart';
 

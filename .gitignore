@@ -48,3 +48,5 @@ android/key.properties
 keys/*
 
 .last_build_id
+# Screenshot test failure images
+tool/screenshots/failures/

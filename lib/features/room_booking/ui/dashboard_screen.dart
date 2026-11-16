@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:resit/core/providers.dart';
+import 'package:resit/features/room_booking/room_booking_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
@@ -14,8 +14,8 @@ import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/domain/quota.dart';
-import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
-import 'package:resit/features/room_booking/presentation/quota_card.dart';
+import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
+import 'package:resit/features/room_booking/ui/quota_card.dart';
 import 'package:resit/core/widgets/desktop.dart';
 
 /// Book a room: pick a day, a start time and a length, then choose from the

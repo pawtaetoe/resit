@@ -2,15 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:resit/core/providers.dart';
+import 'package:resit/features/room_booking/room_booking_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
-import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
-import 'package:resit/features/room_booking/presentation/quota_card.dart';
+import 'package:resit/features/room_booking/ui/dashboard_screen.dart';
+import 'package:resit/features/room_booking/ui/quota_card.dart';
 import 'package:resit/core/widgets/desktop.dart';
 
 /// My bookings: upcoming (confirmed) and past bookings, with cancel.

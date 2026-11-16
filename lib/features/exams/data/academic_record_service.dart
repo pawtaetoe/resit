@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:resit/features/common/data/private_store.dart';
+import 'package:resit/core/storage/private_store.dart';
 import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:resit/features/exams/domain/exam_results.dart';
 import 'package:resit/features/exams/data/exam_slip_store.dart';
