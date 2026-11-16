@@ -1,3 +1,4 @@
+import 'package:resit/core/auth/app_lock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/core/network/peoplesoft.dart';
@@ -57,6 +58,11 @@ final timetableServiceProvider = Provider<TimetableService>((ref) {
 final authStateProvider = StateProvider<bool>((ref) => false);
 
 /// Checks the session and signs in again automatically when it has expired.
+/// The app lock (fingerprint, face or device PIN), read once at launch.
+final appLockProvider = StateNotifierProvider<AppLock, AppLockState>((ref) {
+  return AppLock(ref.watch(secureStorageProvider))..init();
+});
+
 final sessionControllerProvider = StateNotifierProvider<SessionController, SessionState>((ref) {
   return SessionController(ref.watch(authServiceProvider), ref.watch(secureStorageProvider));
 });

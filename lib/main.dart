@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:resit/core/auth/app_lock.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
@@ -16,6 +17,8 @@ void main() {
   // Check the saved session on launch and sign back in automatically if it
   // has expired, so the user never has to do it by hand.
   container.read(sessionControllerProvider.notifier).ensureSignedIn();
+  // Locks at once if the app lock is on.
+  container.read(appLockProvider);
 
   runApp(
     UncontrolledProviderScope(
@@ -25,11 +28,12 @@ void main() {
   );
 }
 
-class ReSitApp extends StatelessWidget {
+class ReSitApp extends ConsumerWidget {
   const ReSitApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lock = ref.watch(appLockProvider);
     return MaterialApp(
       title: 'reSIT',
       debugShowCheckedModeBanner: false,
@@ -38,7 +42,11 @@ class ReSitApp extends StatelessWidget {
       themeMode: ThemeMode.system,
       // On very wide windows (desktop), keep the app in a readable centred
       // column instead of stretching every list across the screen.
-      builder: (context, child) => _ReadableWidth(child: child!),
+      builder: (context, child) => AppLockGate(
+        lock: lock,
+        onUnlock: () => ref.read(appLockProvider.notifier).unlock(),
+        child: _ReadableWidth(child: child!),
+      ),
       home: const MainLayout(),
     );
   }

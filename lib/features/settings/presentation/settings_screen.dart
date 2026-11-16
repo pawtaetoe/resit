@@ -7,6 +7,7 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
+import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/settings/presentation/totp_section.dart';
 
@@ -26,6 +27,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _passwordController = TextEditingController();
   bool _showPassword = false;
   String? _savedUsername;
+
+  /// A password is saved (or held for this run of the app). It is never put
+  /// back into the form, where "show password" would reveal it to anyone
+  /// holding the phone.
+  bool _hasPassword = false;
+  bool _remember = true;
 
   /// Showing the form to change the saved student ID or password.
   bool _editing = false;
@@ -48,12 +55,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _loadCredentials() async {
-    final creds = await ref.read(secureStorageProvider).getCredentials();
+    final storage = ref.read(secureStorageProvider);
+    final creds = await storage.getCredentials();
+    final remember = await storage.remembersPassword();
     if (!mounted) return;
     setState(() {
       _usernameController.text = creds['username'] ?? '';
-      _passwordController.text = creds['password'] ?? '';
+      _passwordController.clear();
       _savedUsername = creds['username'];
+      _hasPassword = (creds['password'] ?? '').isNotEmpty;
+      _remember = remember;
     });
   }
 
@@ -61,10 +72,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!_formKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
 
+    // Left blank: keep the saved password (e.g. only the ID changed).
+    // Passwords can legitimately start or end with spaces, so no trim.
+    final password = _passwordController.text.isNotEmpty
+        ? _passwordController.text
+        : (await ref.read(secureStorageProvider).getCredentials())['password'] ?? '';
     final ok = await ref.read(sessionControllerProvider.notifier).signInWith(
           _usernameController.text.trim(),
-          // Passwords can legitimately start or end with spaces, so no trim.
-          _passwordController.text,
+          password,
         );
     await _loadCredentials();
     if (!mounted) return;
@@ -221,6 +236,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     message: session.error!,
                   ),
                 ],
+                const SizedBox(height: Space.section),
+                _securityOptions(),
                 // Automatic codes only make sense once there's a login to use them with.
                 if (signedIn || _savedUsername != null) ...[
                   const SizedBox(height: Space.section),
@@ -233,7 +250,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Your password is stored only on this device, encrypted by the system keychain.',
+                        _remember
+                            ? 'Your password is stored only on this device, encrypted by the system keychain, '
+                                'and is only ever sent to SIT.'
+                            : 'Your password is not stored. It is only ever sent to SIT.',
                         style: theme.textTheme.bodySmall?.copyWith(color: muted),
                       ),
                     ),
@@ -269,6 +289,61 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// The app lock and whether the password is kept on the device.
+  Widget _securityOptions() {
+    final theme = Theme.of(context);
+    final lock = ref.watch(appLockProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SectionLabel('Security'),
+        Card(
+          margin: EdgeInsets.zero,
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              if (lock.supported)
+                SwitchListTile(
+                  secondary: const Icon(Icons.fingerprint),
+                  title: const Text('App lock'),
+                  subtitle: const Text('Ask for your fingerprint, face or device PIN when reSIT opens, '
+                      'and after 30 seconds away.'),
+                  value: lock.enabled,
+                  onChanged: (on) async {
+                    final ok = await ref.read(appLockProvider.notifier).setEnabled(on);
+                    if (!ok && mounted) showError(context, "Couldn't confirm it's you, so the app lock wasn't changed.");
+                  },
+                ),
+              if (lock.supported) const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.password),
+                title: const Text('Remember my password'),
+                subtitle: Text(_remember
+                    ? 'Kept on this device, encrypted, so the app signs you back in whenever SIT times you out.'
+                    : 'Not kept. After the app is closed you enter it again (SIT may also ask for MFA).'),
+                value: _remember,
+                onChanged: _busy
+                    ? null
+                    : (on) async {
+                        await ref.read(secureStorageProvider).setRemembersPassword(on);
+                        await _loadCredentials();
+                      },
+              ),
+            ],
+          ),
+        ),
+        if (lock.supported && !lock.enabled && _remember)
+          Padding(
+            padding: const EdgeInsets.only(top: Space.dense),
+            child: Text(
+              'Tip: turn on the app lock so someone else holding your phone can\'t open reSIT.',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+      ],
+    );
+  }
+
   /// Whether you're signed in, and as whom. When signed in, "Change" edits
   /// the saved login.
   Widget _statusBanner(bool signedIn, SessionPhase phase) {
@@ -277,7 +352,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         tone: Tone.success,
         icon: Icons.verified_user_outlined,
         title: _savedUsername != null ? 'Signed in as $_savedUsername' : 'Signed in',
-        message: 'The app signs you back in automatically when your session expires.',
+        message: _remember
+            ? 'The app signs you back in automatically when your session expires.'
+            : 'Signed in until you close the app.',
         action: _editing
             ? null
             : TextButton(onPressed: _busy ? null : () => setState(() => _editing = true), child: const Text('Change')),
@@ -319,6 +396,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               obscureText: !_showPassword,
               decoration: InputDecoration(
                 labelText: 'Password',
+                helperText: _editing && _hasPassword ? 'Leave blank to keep your saved password' : null,
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
                   tooltip: _showPassword ? 'Hide password' : 'Show password',
@@ -329,7 +407,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               textInputAction: TextInputAction.done,
               autofillHints: const [AutofillHints.password],
               onFieldSubmitted: (_) => _signIn(),
-              validator: (v) => (v == null || v.isEmpty) ? 'Enter your password' : null,
+              validator: (v) => (v == null || v.isEmpty) && !(_editing && _hasPassword) ? 'Enter your password' : null,
             ),
           ],
         ),

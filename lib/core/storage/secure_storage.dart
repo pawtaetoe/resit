@@ -9,6 +9,12 @@ class SecureStorage {
   static const _keySession = 'rbs_session_cookies';
   static const _keyTotp = 'mfa_totp_uri';
   static const _keySignedOut = 'signed_out';
+  static const _keyForgetPassword = 'forget_password';
+  static const _keyAppLock = 'app_lock';
+
+  /// The password while the app is open, when the user chose not to keep it
+  /// on the device: never written anywhere.
+  String? _sessionPassword;
 
   final FlutterSecureStorage _store;
   Future<void>? _migration;
@@ -36,19 +42,50 @@ class SecureStorage {
     }();
   }
 
+  /// Saves the login. The password is kept on the device only if
+  /// [remembersPassword]; otherwise only until the app is closed.
   Future<void> saveCredentials(String username, String password) async {
     await _migrateLegacy();
     await _store.write(key: _keyUsername, value: username);
-    await _store.write(key: _keyPassword, value: password);
+    _sessionPassword = password;
+    if (await remembersPassword()) {
+      await _store.write(key: _keyPassword, value: password);
+    } else {
+      await _store.delete(key: _keyPassword);
+    }
   }
 
   Future<Map<String, String?>> getCredentials() async {
     await _migrateLegacy();
     return {
       'username': await _store.read(key: _keyUsername),
-      'password': await _store.read(key: _keyPassword),
+      'password': await _store.read(key: _keyPassword) ?? _sessionPassword,
     };
   }
+
+  /// Whether the password is kept on the device (encrypted) so the app can
+  /// sign back in after it's been closed. On by default.
+  Future<bool> remembersPassword() async => await _store.read(key: _keyForgetPassword) != '1';
+
+  /// Turning it off deletes the saved password at once (it's kept in memory
+  /// until the app closes); turning it on saves the password in use.
+  Future<void> setRemembersPassword(bool remember) async {
+    await _migrateLegacy();
+    if (remember) {
+      await _store.delete(key: _keyForgetPassword);
+      final password = _sessionPassword;
+      if (password != null) await _store.write(key: _keyPassword, value: password);
+    } else {
+      _sessionPassword ??= await _store.read(key: _keyPassword);
+      await _store.write(key: _keyForgetPassword, value: '1');
+      await _store.delete(key: _keyPassword);
+    }
+  }
+
+  Future<bool> appLockEnabled() async => await _store.read(key: _keyAppLock) == '1';
+
+  Future<void> setAppLockEnabled(bool on) =>
+      on ? _store.write(key: _keyAppLock, value: '1') : _store.delete(key: _keyAppLock);
 
   Future<void> saveSession(String cookiesJson) async {
     await _migrateLegacy();
@@ -69,6 +106,7 @@ class SecureStorage {
     await _migrateLegacy();
     await _store.delete(key: _keyUsername);
     await _store.delete(key: _keyPassword);
+    _sessionPassword = null;
   }
 
   /// The authenticator setup link (otpauth://...) used to fill MFA

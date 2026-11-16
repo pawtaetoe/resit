@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resit/core/auth/app_lock.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/network/session_client.dart';
@@ -200,6 +201,27 @@ class _Unreachable extends SessionController {
   Future<bool> ensureSignedIn({bool force = false}) async => false;
 }
 
+/// The app lock as on a phone with a fingerprint reader.
+class _ShotLock extends AppLock {
+  _ShotLock({bool locked = false})
+      : super(SecureStorage(), check: _Yes(), watchLifecycle: false) {
+    state = AppLockState(supported: true, enabled: true, locked: locked);
+  }
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  Future<bool> unlock() async => false;
+}
+
+class _Yes implements DeviceCheck {
+  @override
+  Future<bool> isSupported() async => true;
+  @override
+  Future<bool> confirm(String reason) async => true;
+}
+
 late AcademicCalendar _calendar;
 
 List<Override> _overrides() => [
@@ -219,19 +241,29 @@ List<Override> _overrides() => [
       lmsAssignmentsProvider.overrideWith((ref, id) async => _assignments[id]!),
       lmsQuizzesProvider.overrideWith((ref, id) async => _quizzes[id]!),
       lmsGradesProvider.overrideWith((ref, id) async => CourseGrades([])),
+      appLockProvider.overrideWith((ref) => _ShotLock()),
       lmsGroupsProvider.overrideWith((ref, id) async => [MyGroup(category: 'Project Groups', name: 'Team 7', memberCount: 5)]),
     ];
 
 Future<void> _shoot(WidgetTester tester, Widget app, String name,
-    {Brightness brightness = Brightness.light, List<Override> extra = const []}) async {
-  tester.view.physicalSize = const Size(1080, 2340);
-  tester.view.devicePixelRatio = 2.75;
+    {Brightness brightness = Brightness.light,
+    List<Override> extra = const [],
+    bool desktop = false,
+    Widget? push}) async {
+  tester.view.physicalSize = desktop ? const Size(1920, 1200) : const Size(1080, 2340);
+  tester.view.devicePixelRatio = desktop ? 1.5 : 2.75;
   tester.platformDispatcher.platformBrightnessTestValue = brightness;
   addTearDown(tester.view.reset);
   addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
   await tester.pumpWidget(ProviderScope(overrides: [..._overrides(), ...extra], child: app));
   for (var i = 0; i < 5; i++) {
     await tester.pump(const Duration(milliseconds: 200));
+  }
+  if (push != null) {
+    tester.state<NavigatorState>(find.byType(Navigator).first).push(MaterialPageRoute<void>(builder: (_) => push));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
   }
   await expectLater(find.byType(MaterialApp), matchesGoldenFile('../../docs/screenshots/$name.png'));
   await tester.pumpWidget(const SizedBox());
@@ -266,6 +298,15 @@ void main() {
       sessionControllerProvider.overrideWith((ref) => _Unreachable()),
     ]);
   });
+  testWidgets('account', (t) => _shoot(t, const ReSitApp(), 'account',
+      extra: [homeTabProvider.overrideWith((ref) => AppTab.account)]));
+  testWidgets('locked', (t) => _shoot(t, const ReSitApp(), 'app_lock',
+      extra: [appLockProvider.overrideWith((ref) => _ShotLock(locked: true))]));
+  testWidgets('desktop home', (t) => _shoot(t, const ReSitApp(), 'desktop_home', desktop: true));
+  testWidgets('desktop timetable',
+      (t) => _shoot(t, const ReSitApp(), 'desktop_timetable', desktop: true, push: const TimetableScreen()));
+  testWidgets('desktop courses',
+      (t) => _shoot(t, const ReSitApp(), 'desktop_xsite', desktop: true, push: const CoursesScreen()));
   testWidgets('courses', (t) => _shoot(t, _screen(const CoursesScreen()), 'xsite_courses'));
   testWidgets('course', (t) => _shoot(t, _screen(CourseScreen(course: _courses.first)), 'xsite_course'));
   testWidgets('progress', (t) => _shoot(t, _screen(const AcademicProgressScreen()), 'academic_progress'));

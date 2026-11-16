@@ -34,7 +34,19 @@ All screenshots use made-up demo data.
 | --- | --- | --- |
 | <img src="docs/screenshots/xsite_course.png" width="250" alt="One course: due soon, content progress, announcements, assignments, quizzes, grades, groups"> | <img src="docs/screenshots/academic_progress.png" width="250" alt="Academic progress with grades hidden behind a privacy curtain"> | <img src="docs/screenshots/timetable_offline.png" width="250" alt="The timetable shown from the saved copy when SIT can't be reached"> |
 
-<img src="docs/screenshots/home_dark.png" width="250" alt="Home screen in dark mode"> <br>*Dark mode*
+| Security settings | App lock | Dark mode |
+| --- | --- | --- |
+| <img src="docs/screenshots/account.png" width="250" alt="Account: app lock and remember-password switches"> | <img src="docs/screenshots/app_lock.png" width="250" alt="reSIT locked, asking for fingerprint, face or device PIN"> | <img src="docs/screenshots/home_dark.png" width="250" alt="Home screen in dark mode"> |
+
+### Desktop (Windows, Linux, macOS)
+
+On wide windows, a side rail replaces the bottom tabs and content stays in a readable column.
+
+<img src="docs/screenshots/desktop_home.png" width="800" alt="Home on a desktop window with a side navigation rail">
+
+| Timetable | xSiTe courses |
+| --- | --- |
+| <img src="docs/screenshots/desktop_timetable.png" width="400" alt="Weekly timetable on desktop"> | <img src="docs/screenshots/desktop_xsite.png" width="400" alt="xSiTe due soon and announcements on desktop"> |
 
 ## What it does
 
@@ -83,6 +95,9 @@ Security is the first design concern, because the app handles a student's SIT ac
 
 ### On the device
 
+- **App lock.** reSIT can ask for the fingerprint, face or device PIN when it opens, and again after 30 seconds in the background. While it's in the background, the app switcher shows a cover instead of your data. Turning the lock on or off needs the same check, so someone holding an unlocked phone can't simply switch it off. The lock is available on Android, iOS, macOS and Windows (Windows Hello).
+- **Your choice whether the password is kept.** "Remember my password" is on by default, because SIT's sessions time out often and signing in again each time is the main complaint. Students who prefer not to store it can turn it off; the password is then held in memory only and entered again after the app is closed.
+- **The saved password is never shown.** It is not filled back into any form, so "show password" can't reveal it.
 - **Encrypted storage.** The SIT username, password and optional authenticator secret are kept in the platform's secure store:
   - Android: Keystore-backed encrypted preferences
   - iOS and macOS: Keychain, this device only, never synced
@@ -110,8 +125,9 @@ Security is the first design concern, because the app handles a student's SIT ac
 ### Known limitations, stated plainly
 
 - reSIT reads SIT's web pages the way a browser does, because there is no public API. A change to SIT's pages can break a feature until the app is updated.
-- The app keeps the SIT password on the device, so it can sign in again when a session expires. It is encrypted, but it is still a stored password. **Official OAuth or token-based access from SIT would remove the need to store it**, and is the change the project would most like to make with SIT's support.
-- The optional on-device authenticator stores the MFA secret on the same phone as the password. It is off by default. Students who want two separate factors should keep using Microsoft Authenticator push.
+- By default the app keeps the SIT password on the device, so it can sign in again when a session times out. It is encrypted and protected by the app lock, but it is still a stored password. **Official OAuth or token-based access from SIT would remove the need to store it**, and is the change the project would most like to make with SIT's support.
+- The optional on-device authenticator stores the MFA secret on the same phone as the password. It is off by default. Where the device supports it, turning it on also turns on the app lock, so the phone's owner (fingerprint, face or PIN) is still required. Students who want two fully separate factors can keep using Microsoft Authenticator push.
+- Some features have been built from public documentation and not yet tested on every kind of account: xSiTe assignments, quizzes, grades and groups, and cancelling a room booking. With access to SIT's backend APIs these would be both simpler to build and fully verified.
 - There has been no independent security audit yet.
 
 ## Platforms
@@ -121,8 +137,8 @@ Security is the first design concern, because the app handles a student's SIT ac
 | Android | Built by CI (`.apk`, `.aab`) and published to Google Play internal testing |
 | Windows | Built by CI (installer and portable `.zip`) |
 | Linux | Built by CI (`.deb`) |
-| iOS | Project included; needs a Mac build and an Apple developer account to ship |
-| macOS | Project included; needs a Mac build, signing and notarisation to ship |
+| iOS | Included in the code, **not yet built or tested**: building and installing needs a Mac and an Apple developer account |
+| macOS | Included in the code, **not yet built or tested**: needs a Mac and an Apple developer account for signing and notarisation |
 | Web | Not supported: browsers block cross-site requests to SIT's systems (CORS) |
 
 Downloads are on the [Releases](../../releases) page.
@@ -137,7 +153,7 @@ Downloads are on the [Releases](../../releases) page.
   - Pull down to refresh.
 - **Errors in plain English** with a clear next step. Technical details are folded away for when they help.
 - **Consistent building blocks.** One design system (Material 3), with shared cards, spacing, banners and buttons.
-- **Within thumb reach.** Main actions sit in a bottom bar.
+- **Within thumb reach.** Main actions sit in a bottom bar on phones; desktop windows get a side rail and a readable column.
 - **Accessible.**
   - Light and dark themes.
   - Text scales with the system font size.

@@ -236,6 +236,16 @@ class _TotpSetupSheetState extends ConsumerState<_TotpSetupSheet> {
     final config = _config;
     if (config == null) return;
     setState(() => _saving = true);
+    // The code secret sits next to the saved password, so the phone itself
+    // must be locked to the owner: turn on the app lock first where the
+    // device has one (it asks for the fingerprint or PIN).
+    final lock = ref.read(appLockProvider);
+    if (lock.supported && !lock.enabled && !await ref.read(appLockProvider.notifier).setEnabled(true)) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showError(context, 'Automatic codes need the app lock. Confirm with your fingerprint or PIN to turn it on.');
+      return;
+    }
     await ref.read(secureStorageProvider).saveTotp(config.toUri());
     ref.invalidate(totpConfigProvider);
     if (!mounted) return;
@@ -292,6 +302,13 @@ class _TotpSetupSheetState extends ConsumerState<_TotpSetupSheet> {
                         'below.'),
                     step(4, 'Type the code shown below into the Microsoft page to finish adding it.'),
                     step(5, 'Set "Authenticator app or hardware token – code" as your default sign-in method.'),
+                    if (ref.watch(appLockProvider).supported) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Saving turns on the app lock, so only you can open reSIT and its codes.',
+                        style: muted,
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     TextField(
                       controller: _controller,
