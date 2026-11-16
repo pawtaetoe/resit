@@ -5,6 +5,7 @@ import 'package:http/testing.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
+import 'package:resit/sites/in4sit/exam_parsers.dart';
 import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/features/exams/domain/exam_results.dart';
