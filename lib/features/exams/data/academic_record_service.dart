@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:resit/core/storage/private_store.dart';
-import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:resit/features/exams/domain/exam_results.dart';
+import 'package:resit/features/exams/data/exam_results_repository.dart';
 import 'package:resit/features/exams/data/exam_slip_store.dart';
 import 'package:resit/features/exams/domain/academic_record.dart';
 
@@ -16,7 +16,7 @@ class AcademicRecordService {
   static const _key = 'academic_record';
   static const maxAge = Duration(days: 1);
 
-  final ExamService exams;
+  final ExamResultsRepository exams;
   final PrivateStore _store;
   final ValueNotifier<(int done, int total)?> _progress = ValueNotifier(null);
   Future<AcademicRecord?>? _loading;
@@ -61,7 +61,7 @@ class AcademicRecordService {
       // The newest term can still change; older released slips can't.
       final kept = <String, ExamResults>{};
       for (final term in terms.skip(1)) {
-        final slip = await exams.slips.slip(term.name);
+        final slip = await exams.savedSlip(term.name);
         if (slip != null) kept[term.name] = slip.withTerm(term);
       }
       final total = terms.length - kept.length;

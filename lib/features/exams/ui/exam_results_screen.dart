@@ -66,7 +66,7 @@ class _ExamResultsScreenState extends ConsumerState<_ExamResults> {
       _error = null;
       if (term != null) _term = term;
     });
-    final service = ref.read(examServiceProvider);
+    final service = ref.read(examResultsRepositoryProvider);
     try {
       final cached = _terms;
       final List<ExamTerm> terms;

@@ -124,10 +124,10 @@ void main() {
     final auth = AuthService(SessionClient(mock), SecureStorage());
     final service = ExamService(auth);
 
-    final terms = await service.terms();
+    final terms = await service.readTerms();
     expect(terms.first.name, '2025/26 Trimester 3', reason: 'latest first');
 
-    final results = await service.results(terms.first);
+    final results = await service.readResults(terms.first);
     auth.dispose();
 
     expect(results.courses, hasLength(2));

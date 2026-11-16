@@ -1,29 +1,25 @@
-import 'dart:async';
-
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/sites/in4sit/exam_parsers.dart';
 import 'package:resit/sites/in4sit/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/features/exams/domain/exam_results.dart';
-import 'package:resit/features/exams/data/exam_slip_store.dart';
 
 /// Reads "View My Exam Results" on in4SIT. The page is stateful on the server
 /// (PeopleSoft), so requests go through the app's one [In4SitQueue]. The page
 /// is kept open between calls: the term list, then Continue for a term's
 /// slip, then "View Other Term" back to the list for the next one, so going
 /// through several terms doesn't reopen the page (and sign in) for each.
+///
+/// Like [PeopleSoftPage], its reads are not queued by the service itself:
+/// run them inside [queue]. Keeping slips is the data layer's job (see
+/// `ExamResultsRepository`).
 class ExamService {
   final AuthService auth;
 
   /// Shared with every other in4SIT reader, so their requests take turns.
   final In4SitQueue queue;
 
-  /// Released slips kept on the device.
-  final ExamSlipStore slips;
-
-  ExamService(this.auth, {In4SitQueue? queue, ExamSlipStore? slips})
-      : queue = queue ?? In4SitQueue(),
-        slips = slips ?? ExamSlipStore();
+  ExamService(this.auth, {In4SitQueue? queue}) : queue = queue ?? In4SitQueue();
 
   static final pageUrl =
       Uri.parse('https://in4sit.singaporetech.edu.sg/psc/CSSISSTD/EMPLOYEE/SA/c/N_MANAGE_EXAMS.N_RSLT_SLIP_COMP.GBL');
@@ -34,50 +30,28 @@ class ExamService {
   /// in4SIT drops a page left idle for about 20 minutes; reopen before then.
   static const _pageLife = Duration(minutes: 15);
 
-  final Map<String, ExamResults> _cache = {};
-
   PeopleSoftPage? _page;
   DateTime _openedAt = DateTime(0);
 
   /// The term list the page shows now, or null when it shows a slip.
   List<ExamTerm>? _listed;
 
-  /// The terms that have results, latest first.
-  Future<List<ExamTerm>> terms({void Function(MfaChallenge)? onMfaChallenge}) {
-    return queue.run(() async {
-      final (terms, _) = await _termList(onMfaChallenge);
-      final latestFirst = terms.reversed.toList();
-      unawaited(slips.saveTerms(latestFirst));
-      return latestFirst;
-    });
+  /// The terms that have results, latest first, read from in4SIT. Run
+  /// inside [queue].
+  Future<List<ExamTerm>> readTerms({void Function(MfaChallenge)? onMfaChallenge}) async {
+    final (terms, _) = await _termList(onMfaChallenge);
+    return terms.reversed.toList();
   }
 
-  /// The term list last read, latest first, to show before [terms] answers.
-  Future<List<ExamTerm>> savedTerms() => slips.terms();
+  /// The result slip for [term], read from in4SIT. Run inside [queue].
+  Future<ExamResults> readResults(ExamTerm term, {void Function(MfaChallenge)? onMfaChallenge}) =>
+      _readSlip(term, onMfaChallenge);
 
-  /// The results for [term]. A released slip is kept on the device and
-  /// returned from there; others are kept for the session. Pass [refresh] to
-  /// read it from in4SIT again.
-  Future<ExamResults> results(ExamTerm term, {bool refresh = false, void Function(MfaChallenge)? onMfaChallenge}) {
-    return queue.run(() async {
-      if (!refresh) {
-        final cached = _cache[term.name] ?? await slips.slip(term.name);
-        if (cached != null) return cached.withTerm(term);
-      }
-      final results = await _readSlip(term, onMfaChallenge);
-      _cache[term.name] = results;
-      await slips.save(results);
-      return results;
-    });
-  }
-
-  /// Forgets every slip kept, in memory and on the device.
-  Future<void> clearSaved() async {
-    _cache.clear();
+  /// Closes the page kept open, so the next read opens it afresh.
+  void closePage() {
     _page?.close();
     _page = null;
     _listed = null;
-    await slips.clear();
   }
 
   bool get _pageUsable =>
