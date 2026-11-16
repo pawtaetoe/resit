@@ -12,7 +12,7 @@ import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/services/presentation/overview_grid.dart';
-import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 

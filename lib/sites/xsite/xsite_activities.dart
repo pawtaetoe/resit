@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:resit/features/lms/data/lms_service.dart';
+import 'package:resit/sites/xsite/xsite_service.dart';
 
 // Course activities on xSiTe beyond content: announcements, assignments
 // (dropbox), quizzes, grades and groups. Read from Brightspace's documented

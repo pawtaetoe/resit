@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:resit/core/network/session_client.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 
 class BookingService {

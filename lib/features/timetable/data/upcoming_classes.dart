@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/common/data/private_store.dart';
 
 /// When a class starts and ends, as date-times.

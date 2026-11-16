@@ -8,8 +8,8 @@ import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/lms/data/lms_activities.dart';
-import 'package:resit/features/lms/data/lms_service.dart';
+import 'package:resit/sites/xsite/xsite_activities.dart';
+import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/presentation/courses_screen.dart';
 import 'package:resit/core/widgets/desktop.dart';
 

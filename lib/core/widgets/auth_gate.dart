@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';

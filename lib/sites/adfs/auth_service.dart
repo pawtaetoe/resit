@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as parser;
-import 'package:resit/core/auth/totp.dart';
+import 'package:resit/sites/adfs/totp.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 

@@ -1,8 +1,8 @@
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
 import 'package:intl/intl.dart';
-import 'package:resit/core/auth/auth_service.dart';
-import 'package:resit/core/network/peoplesoft.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
+import 'package:resit/sites/in4sit/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 
 /// One class meeting on a specific date.

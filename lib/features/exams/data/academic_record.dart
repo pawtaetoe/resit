@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:resit/features/common/data/private_store.dart';
-import 'package:resit/features/exams/data/exam_service.dart';
+import 'package:resit/sites/in4sit/exam_service.dart';
 
 /// One term's numbers, for the progress charts.
 class TermSummary {

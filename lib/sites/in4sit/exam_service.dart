@@ -3,8 +3,8 @@ import 'dart:convert';
 
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as parser;
-import 'package:resit/core/auth/auth_service.dart';
-import 'package:resit/core/network/peoplesoft.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
+import 'package:resit/sites/in4sit/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/features/common/data/private_store.dart';
 

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
@@ -10,7 +10,7 @@ import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/exams/data/exam_service.dart';
+import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:resit/core/widgets/desktop.dart';
 

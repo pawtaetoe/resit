@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resit/features/calendar/data/academic_calendar.dart';
+import 'package:resit/sites/sit_website/academic_calendar.dart';
 
 void main() {
   final calendar = AcademicCalendar(

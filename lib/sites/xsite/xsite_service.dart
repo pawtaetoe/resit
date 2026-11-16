@@ -4,9 +4,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
-import 'package:resit/features/lms/data/lms_activities.dart';
+import 'package:resit/sites/xsite/xsite_activities.dart';
 
 /// One course on xSiTe (SIT's Brightspace LMS).
 class LmsCourse {

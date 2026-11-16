@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
-import 'package:resit/features/exams/data/exam_service.dart';
+import 'package:resit/sites/in4sit/exam_service.dart';
 
 ExamResults _slip(String term, List<CourseResult> courses, {String gpa = '', String cgpa = ''}) => ExamResults(
       term: ExamTerm(index: 0, name: term),
