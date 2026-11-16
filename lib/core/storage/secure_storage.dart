@@ -11,6 +11,7 @@ class SecureStorage {
   static const _keySignedOut = 'signed_out';
   static const _keyForgetPassword = 'forget_password';
   static const _keyAppLock = 'app_lock';
+  static const _keyRejected = 'credentials_rejected';
 
   /// The password while the app is open, when the user chose not to keep it
   /// on the device: never written anywhere.
@@ -18,6 +19,28 @@ class SecureStorage {
 
   final FlutterSecureStorage _store;
   Future<void>? _migration;
+
+  static const _installedMarker = 'installed';
+
+  /// On iPhone, iPad and Mac, Keychain items outlive the app: a reinstalled
+  /// app would find the old password, verification-code secret and session.
+  /// App preferences are removed with the app, so a missing marker there
+  /// means a fresh install, and the leftovers are wiped. (Android and the
+  /// desktops remove the app's secure storage with the app.)
+  static Future<void> wipeIfReinstalled({bool apple = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_installedMarker) == true) return;
+      if (apple) {
+        await const FlutterSecureStorage(
+          iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
+        ).deleteAll();
+      }
+      await prefs.setBool(_installedMarker, true);
+    } catch (_) {
+      // Storage unavailable: nothing to wipe, try again next launch.
+    }
+  }
 
   SecureStorage([FlutterSecureStorage? store])
       : _store = store ??
@@ -47,6 +70,7 @@ class SecureStorage {
   Future<void> saveCredentials(String username, String password) async {
     await _migrateLegacy();
     await _store.write(key: _keyUsername, value: username);
+    await _store.delete(key: _keyRejected);
     _sessionPassword = password;
     if (await remembersPassword()) {
       await _store.write(key: _keyPassword, value: password);
@@ -82,6 +106,14 @@ class SecureStorage {
     }
   }
 
+  /// Set when SIT turned the saved password down (e.g. it was changed in a
+  /// browser). While set, the app never sends the saved password again on
+  /// its own: repeating a wrong password would lock the SIT account. Cleared
+  /// when the user signs in with a password that works.
+  Future<bool> credentialsRejected() async => await _store.read(key: _keyRejected) == '1';
+
+  Future<void> setCredentialsRejected() => _store.write(key: _keyRejected, value: '1');
+
   Future<bool> appLockEnabled() async => await _store.read(key: _keyAppLock) == '1';
 
   Future<void> setAppLockEnabled(bool on) =>
@@ -106,6 +138,7 @@ class SecureStorage {
     await _migrateLegacy();
     await _store.delete(key: _keyUsername);
     await _store.delete(key: _keyPassword);
+    await _store.delete(key: _keyRejected);
     _sessionPassword = null;
   }
 

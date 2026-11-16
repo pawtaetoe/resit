@@ -421,7 +421,8 @@ bool slipMatchesTerm(String heading, String termName) {
 /// has none (for troubleshooting). Pure, so it can run on an isolate.
 ({List<ExamTerm> terms, String? description}) readExamTermList(dom.Document doc, String html) {
   final terms = parseExamTermsDoc(doc);
-  return (terms: terms, description: terms.isEmpty ? describeHtmlPage(html) : null);
+  // The page's structure only: its text can include the student's name and ID.
+  return (terms: terms, description: terms.isEmpty ? describeHtmlPage(html, includeText: false) : null);
 }
 
 typedef ExamSlipReply = ({ExamResults results, bool isSlip});

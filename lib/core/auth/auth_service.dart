@@ -71,6 +71,19 @@ class SignInCancelledException implements Exception {
   String toString() => 'Sign-in cancelled.';
 }
 
+/// SIT turned the password down. The saved password is then not sent again
+/// automatically until the user enters it afresh: repeating a wrong
+/// password would lock the SIT account.
+class CredentialsRejectedException implements Exception {
+  /// What SIT's sign-in page said, if anything.
+  final String? reason;
+  const CredentialsRejectedException([this.reason]);
+
+  @override
+  String toString() => 'SIT did not accept your password${reason == null ? '' : ' ($reason)'}. '
+      'If you changed it, enter the new one in Account.';
+}
+
 /// A sign-in step was about to send credentials or a sign-in token
 /// somewhere other than SIT's own servers over https, and was stopped.
 class UntrustedHostException implements Exception {
@@ -195,6 +208,10 @@ class AuthService {
   final signInLog = ValueNotifier<List<String>>(const []);
 
   void _record(String message) {
+    // Error text can carry full addresses (http's ClientException adds
+    // "uri=..."): keep the host and path, drop query strings, which can hold
+    // tokens or IDs. Users copy this log into bug reports.
+    message = message.replaceAllMapped(RegExp(r'(https?://[^\s?#]+)[?#][^\s,)]*'), (m) => '${m[1]}?…');
     final t = DateTime.now();
     final stamp = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:'
         '${t.second.toString().padLeft(2, '0')}';
@@ -327,6 +344,7 @@ class AuthService {
 
     if (fields == null) {
       final error = _extractError(parser.parse(page));
+      if (_asksForPassword(page)) await _rejected(username, password, error);
       throw Exception(error ?? "No wresult found in ADFS reply. Check your Student ID and Password.");
     }
 
@@ -749,7 +767,10 @@ class AuthService {
 
     for (var i = 0; i < 3; i++) {
       final landed = response.request?.url ?? url;
-      var relay = _extractRelayForm(response.body, landed);
+      // Only SIT's sign-in server hands out sign-in tokens: a token-like form
+      // on any other page is not replayed (it could sign the app in to
+      // someone else's session).
+      var relay = isAdfs(landed) ? _extractRelayForm(response.body, landed) : null;
 
       if (relay == null && !signedIn && landed.host != url.host) {
         debugLog('SSO: no relay form on ${landed.host}${landed.path} (status ${response.statusCode}). '
@@ -817,6 +838,12 @@ class AuthService {
     final username = creds['username'];
     final password = creds['password'];
     if (username == null || username.isEmpty || password == null || password.isEmpty) return null;
+    // SIT already turned this password down: sending it again could lock
+    // the account. The user enters it afresh in Account.
+    if (await storage.credentialsRejected()) {
+      log('Saved password was rejected before; not sending it again.');
+      throw const CredentialsRejectedException();
+    }
 
     final action = form.attributes['action'];
     final target = (action == null || action.isEmpty) ? pageUrl : pageUrl.resolve(action);
@@ -845,9 +872,24 @@ class AuthService {
       relay = _extractRelayForm(mfa.page, mfa.url);
     }
     if (relay == null) {
-      throw Exception(_extractError(parser.parse(body)) ?? 'ADFS sign-in failed. Check your credentials in Settings.');
+      final error = _extractError(parser.parse(body));
+      if (_asksForPassword(body)) await _rejected(username, password, error);
+      throw Exception(error ?? 'ADFS sign-in failed. Check your credentials in Settings.');
     }
     return relay;
+  }
+
+  /// ADFS answered a password with its password form again: the password
+  /// was turned down.
+  static bool _asksForPassword(String page) =>
+      parser.parse(page).querySelector('form input[type="password"]') != null;
+
+  /// Records that SIT turned down [password] if it is the saved one, so it
+  /// is never sent again automatically, and stops with a clear message.
+  Future<Never> _rejected(String username, String password, String? error) async {
+    final saved = await storage.getCredentials();
+    if (saved['username'] == username && saved['password'] == password) await storage.setCredentialsRejected();
+    throw CredentialsRejectedException(error);
   }
 
   ({Uri action, Map<String, String> fields})? _extractRelayForm(String body, Uri pageUrl) {
@@ -886,6 +928,8 @@ class AuthService {
       }
     }
     client.clearCookies();
+    // The troubleshooting log can name the account: not kept past sign-out.
+    signInLog.value = const [];
     _cachedCsrfToken = null;
     _lastValidated = null;
     await storage.clearSession();

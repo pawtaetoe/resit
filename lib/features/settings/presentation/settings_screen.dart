@@ -10,6 +10,7 @@ import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/settings/presentation/totp_section.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Account tab: the first sign-in, the saved login, sign out, and automatic
 /// verification codes. After the first sign-in the app signs itself back in
@@ -129,6 +130,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ref.invalidate(p);
     }
     if (forget) {
+      // Settings that say something about the student (their modules,
+      // graduation year, usual booking) go too.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        for (final key in const [
+          'module_colours',
+          'graduation_year',
+          'graduation_date',
+          'book_duration',
+          'book_start',
+          'book_types',
+        ]) {
+          await prefs.remove(key);
+        }
+      } catch (_) {}
+      ref.invalidate(graduationYearProvider);
       ref.invalidate(totpConfigProvider);
       _usernameController.clear();
       _passwordController.clear();
@@ -394,6 +411,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               controller: _passwordController,
               enabled: !_busy,
               obscureText: !_showPassword,
+              enableIMEPersonalizedLearning: false,
               decoration: InputDecoration(
                 labelText: 'Password',
                 helperText: _editing && _hasPassword ? 'Leave blank to keep your saved password' : null,

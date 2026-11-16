@@ -294,6 +294,16 @@ class LmsUnavailableException implements Exception {
 class LmsService {
   static const base = 'https://xsite.singaporetech.edu.sg';
 
+  /// Resolves a link from an xSiTe reply against xSiTe, and refuses one that
+  /// points anywhere else: the app only ever fetches from xSiTe itself.
+  static Uri onXsite(String link) {
+    final uri = Uri.parse(base).resolve(link);
+    if (uri.scheme != 'https' || uri.host != Uri.parse(base).host) {
+      throw FormatException('Ignored a link from xSiTe that leaves xSiTe: ${uri.scheme}://${uri.host}');
+    }
+    return uri;
+  }
+
   /// Starts xSiTe's SIT sign-in (SAML via ADFS).
   static final samlLogin = Uri.parse('$base/d2l/lp/auth/saml/login?target=%2fd2l%2fhome');
 
@@ -357,6 +367,7 @@ class LmsService {
     _courses = null;
     _coursesInFlight = null;
     _images.clear();
+    _myId = null;
   }
 
   Future<List<LmsCourse>> _fetchCourses(void Function(MfaChallenge)? onMfaChallenge) async {
@@ -385,7 +396,7 @@ class LmsService {
       final parsed = parseCompletions(await _getJson(url, onMfaChallenge, limited: true));
       items.addAll(parsed.items);
       final next = parsed.next;
-      url = next == null ? null : Uri.parse(base).resolve(next);
+      url = next == null ? null : onXsite(next);
     }
     return CourseProgress(items);
   }
@@ -429,7 +440,7 @@ class LmsService {
       final parsed = parseQuizzes(orgUnitId, await _api(url, onMfaChallenge));
       all.addAll(parsed.quizzes);
       final next = parsed.next;
-      url = next == null ? null : Uri.parse(base).resolve(next).toString();
+      url = next == null ? null : onXsite(next).toString();
     }
     return sortQuizzes(all);
   }
@@ -499,7 +510,7 @@ class LmsService {
     if (path == null) return Future.value(null);
     return _images.putIfAbsent(course.orgUnitId, () async {
       try {
-        final uri = Uri.parse(base).resolve(path);
+        final uri = onXsite(path);
         final sized = uri.replace(queryParameters: {...uri.queryParameters, 'width': '$size', 'height': '$size'});
         final resp = await _limit(() => _client.get(sized));
         final type = resp.headers['content-type'] ?? '';

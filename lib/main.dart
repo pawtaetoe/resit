@@ -11,15 +11,20 @@ import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 import 'package:resit/core/network/session_client.dart';
+import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/features/home/presentation/home_screen.dart';
 import 'package:resit/features/services/presentation/services_screen.dart';
 import 'package:resit/features/settings/presentation/settings_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SessionClient.debugCookies = kDebugMode;
+  // Before anything reads the saved login: a reinstalled app on Apple
+  // devices must not pick up the last install's password.
+  await SecureStorage.wipeIfReinstalled(
+      apple: !kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS));
   final container = ProviderContainer();
 
   // Check the saved session on launch and sign back in automatically if it

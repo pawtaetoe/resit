@@ -27,7 +27,17 @@ class _TimeoutSetting {
   const _TimeoutSetting(this.timeout);
 }
 
+/// Suffixes under which anyone can register a site: a cookie may not be
+/// scoped to one of these.
+const _publicSuffixes = {'sg', 'edu.sg', 'com.sg', 'gov.sg', 'org.sg', 'net.sg', 'per.sg'};
+
 class SessionClient extends http.BaseClient {
+  /// A browser's user agent, because SIT's sign-in only offers its web
+  /// sign-in pages to browsers, followed by an honest "reSIT" token so SIT's
+  /// IT can tell the app's requests apart in their logs.
+  static const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+      'Chrome/148.0.0.0 Safari/537.36 reSIT/1.0 (unofficial SIT student app)';
+
   /// Logs cookie set/delete events (names only, never values) for debugging.
   static bool debugCookies = false;
 
@@ -67,8 +77,7 @@ class SessionClient extends http.BaseClient {
     while (true) {
       currentRequest.followRedirects = false;
       _attachCookies(currentRequest);
-      currentRequest.headers['user-agent'] =
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+      currentRequest.headers['user-agent'] = userAgent;
 
       final host = currentRequest.url.host;
       final pending = _inner.send(currentRequest);
@@ -244,7 +253,9 @@ class SessionClient extends http.BaseClient {
           // bare TLD) means the whole cookie is ignored.
           var d = attrValue.toLowerCase();
           if (d.startsWith('.')) d = d.substring(1);
-          if (d.isEmpty || !d.contains('.') || !_domainMatches(host, d)) {
+          // A public suffix (edu.sg, com.sg, ...) is refused too, so one SIT
+          // site can't set a cookie for every *.edu.sg site.
+          if (d.isEmpty || !d.contains('.') || _publicSuffixes.contains(d) || !_domainMatches(host, d)) {
             rejected = true;
           } else {
             domain = '.$d';
@@ -385,7 +396,10 @@ class _Cookie {
 
     if (!hostMatches) return false;
 
+    // RFC 6265 5.1.4: "/psc" matches "/psc" and "/psc/x", not "/pscx".
     final normalizedRequestPath = requestPath.isEmpty ? '/' : requestPath;
-    return normalizedRequestPath.startsWith(path);
+    if (normalizedRequestPath == path) return true;
+    if (!normalizedRequestPath.startsWith(path)) return false;
+    return path.endsWith('/') || normalizedRequestPath[path.length] == '/';
   }
 }
