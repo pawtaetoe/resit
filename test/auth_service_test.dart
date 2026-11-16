@@ -211,7 +211,7 @@ void main() {
       watch.stop();
       auth.dispose();
 
-      expect(signOut?.host, AuthService.adfsHost);
+      expect(signOut?.host, SitHosts.adfsHost);
       expect(signOut?.scheme, 'https');
       expect(watch.elapsed, lessThan(AuthService.signOutTimeout + const Duration(seconds: 1)));
       expect(auth.isActive, isFalse);
