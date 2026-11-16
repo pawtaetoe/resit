@@ -8,6 +8,7 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/sites/rbs/booking_service.dart';
+import 'package:resit/sites/rbs/rbs_parsers.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/domain/quota.dart';
 import 'package:shared_preferences/shared_preferences.dart';
