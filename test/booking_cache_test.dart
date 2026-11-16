@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   late Map<String, int> fetches;
+  late List<Map<String, String>> cancels;
   late int sessionChecks;
   late List<List<String>> current;
   late BookingService service;
@@ -24,6 +25,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     fetches = {};
+    cancels = [];
     sessionChecks = 0;
     now = DateTime(2026, 11, 7, 9);
     current = [
@@ -42,9 +44,11 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 5));
         return http.Response(jsonEncode({'data': status == 'current' ? current : []}), 200, request: request);
       }
-      if (path == '/DHB001/CancelNormalBooking') {
+      if (path == '/DHB001/SaveToCancel') {
+        cancels.add(request.bodyFields);
         current = [];
-        return http.Response(jsonEncode({'result': 'success'}), 200, request: request);
+        // RBS's own answer: the JSON string "1".
+        return http.Response('"1"', 200, request: request, headers: {'content-type': 'application/json; charset=utf-8'});
       }
       return http.Response('nf', 404, request: request);
     });
@@ -77,6 +81,27 @@ void main() {
     await service.cancelBooking('c1');
     expect(await service.getBookings(), isEmpty);
     expect(fetches['current'], 2);
+  });
+
+  test("cancelling sends what RBS's own Cancel button sends", () async {
+    await service.cancelBooking('lrx2zsWkbM6eD8kqY/Jj6Od+5==');
+    expect(cancels, [
+      {'__RequestVerificationToken': 'tok', 'bookID[]': 'lrx2zsWkbM6eD8kqY/Jj6Od+5==', 'reason': 'No longer needed'},
+    ]);
+  });
+
+  test('the booking ID is read from a checkbox or button in the ID column', () {
+    expect(bookingIdFrom(' abc/+= '), 'abc/+=');
+    expect(bookingIdFrom("<input type='checkbox' name='bookID[]' value='enc/1+='>"), 'enc/1+=');
+    expect(bookingIdFrom('<button class="btn" data-id="enc2">Cancel</button>'), 'enc2');
+    expect(bookingIdFrom('<span>no id</span>'), '');
+  });
+
+  test('only "1" counts as a confirmed cancellation', () {
+    expect(cancelSucceeded('"1"'), isTrue);
+    expect(cancelSucceeded('1'), isTrue);
+    expect(cancelSucceeded('"0"'), isFalse);
+    expect(cancelSucceeded('<html>error</html>'), isFalse);
   });
 
   test('the weekly quota is worked out once per week for the same bookings', () {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:html/parser.dart' as parser;
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
@@ -406,69 +407,66 @@ class BookingService {
     return byRef.values.toList();
   }
 
-  Future<void> cancelBooking(String cancelId) async {
+  /// The reason sent with a cancellation (RBS asks for one).
+  static const cancelReason = 'No longer needed';
+
+  Future<void> cancelBooking(String cancelId, {String reason = cancelReason}) async {
     try {
-      await _cancel(cancelId);
+      await _cancel(cancelId, reason);
     } finally {
       invalidateBookings();
     }
   }
 
-  Future<void> _cancel(String cancelId) async {
+  /// Cancels a booking the way RBS's own "Cancel" button does: one POST to
+  /// SaveToCancel with the booking's encrypted ID, which answers "1" when
+  /// it's done.
+  Future<void> _cancel(String cancelId, String reason) async {
+    final id = bookingIdFrom(cancelId);
+    if (id.isEmpty) throw Exception("This booking can't be cancelled from the app.");
     final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
 
-    final data = {
-      "__RequestVerificationToken": csrfToken,
-      "bookingNo": cancelId,
-      "BookingNo": cancelId,
-      "bookingID": cancelId,
-      "BookingID": cancelId,
-      "id": cancelId,
-    };
-
-    final endpoints = [
-      "$base/DHB001/CancelNormalBooking",
-      "$base/DHB001/CancelBooking",
-      "$base/DHB001/BookingCancellation",
-      "$base/SRB001/CancelBooking",
-    ];
-
-    dynamic lastException;
-    for (final url in endpoints) {
-      try {
-        final response = await client.post(
-          Uri.parse(url),
-          headers: {
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "x-requested-with": "XMLHttpRequest",
-            "referer": "$base/DHB001/DHB001Page",
-            "origin": base,
-          },
-          body: data,
-        );
-
-        if (response.statusCode == 404) {
-          continue;
-        }
-
-        if (response.statusCode != 200) {
-          throw Exception("Server returned status ${response.statusCode}");
-        }
-
-        final payload = jsonDecode(response.body);
-        final isSuccess =
-            payload['result'] == 'success' || payload['status'] == 'success' || payload['success'] == true;
-        if (!isSuccess) {
-          throw Exception(payload['message'] ?? payload['error'] ?? response.body);
-        }
-        return;
-      } catch (e) {
-        lastException = e;
-      }
+    final response = await client.post(
+      Uri.parse("$base/DHB001/SaveToCancel"),
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": "$base/DHB001/DHB001Page",
+        "origin": base,
+      },
+      body: {
+        "__RequestVerificationToken": csrfToken,
+        "bookID[]": id,
+        "reason": reason,
+      },
+    );
+    if (response.statusCode != 200) {
+      throw Exception("RBS answered ${response.statusCode} to the cancellation.");
     }
+    if (!cancelSucceeded(response.body)) {
+      throw Exception("RBS didn't confirm the cancellation (${response.body.trim()}). Check My bookings.");
+    }
+  }
+}
 
-    throw Exception("Cancellation failed: ${lastException ?? 'All endpoints failed'}");
+/// The encrypted booking ID RBS expects, from the bookings list's ID
+/// column: either the ID itself, or the checkbox or button that carries it.
+String bookingIdFrom(String raw) {
+  final text = raw.trim();
+  if (!text.contains('<')) return text;
+  final el = parser.parseFragment(text).querySelector('input[value], button[value], [data-id], [data-bookid]');
+  if (el == null) return '';
+  return (el.attributes['value'] ?? el.attributes['data-id'] ?? el.attributes['data-bookid'] ?? '').trim();
+}
+
+/// RBS answers a successful cancellation with "1" (as a JSON string).
+bool cancelSucceeded(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    return decoded == 1 || decoded == '1' || decoded == true;
+  } catch (_) {
+    return body.trim() == '1';
   }
 }
