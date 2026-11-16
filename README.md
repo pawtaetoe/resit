@@ -73,12 +73,30 @@ On a desktop window, reSIT is laid out like a desktop app:
 | Mobile use | Desktop-first pages: pinch, zoom, deep menus | Built for phones: everything within thumb reach, large tap targets, dark mode |
 | Privacy in public | Grades are shown as soon as the page opens | Grades hidden until you tap |
 
+### Measured: loading the weekly timetable
+
+| | in4SIT in a browser | reSIT |
+| --- | --- | --- |
+| Requests to in4SIT | **47** | **1** |
+| Data transferred | **278 kB** | **13 kB** (about 21× less) |
+| Scripts, styles and images to unpack and run | **2.8 MB** | none |
+| Opening it again later | the page and its resources again | **0 requests** (saved copy) |
+
+Only 1 of the browser's 47 requests is the timetable itself (the 13 kB `SSR_SSENRL` page, the same one reSIT asks for). The other 46 are PeopleSoft scripts, stylesheets and images. The first visit to each week can take reSIT 1–2 extra requests (switching in4SIT to the weekly view, or signing in again after a timeout).
+
+<details>
+<summary>Browser capture (Chrome DevTools, Network tab)</summary>
+
+<img src="docs/evidence/timetable_browser.png" width="500" alt="Chrome DevTools: 47 requests, 278 kB transferred, 2.8 MB resources to load the in4SIT weekly timetable">
+
+</details>
+
 ## Benefits for SIT
 
 - **Higher student satisfaction.** reSIT removes most of the friction students complain about daily: repeated MFA prompts, slow pages, and sites that are hard to use on a phone.
 - **Resilience during outages.** When in4SIT is down, students can still see where their next class is. That means fewer students stranded, and fewer queries to staff, during an incident.
 - **Fewer missed deadlines and fewer support questions.** A single "Due soon" list and clear class and room details answer "where and when?" before students email staff or IT.
-- **Less load on SIT systems.** reSIT caches what rarely changes, removes duplicate requests and limits how many requests run at once (at most 4 to xSiTe). One student opening the app costs the servers less than the same student clicking through each site.
+- **Less load on SIT systems.** Loading the timetable takes reSIT 1 request and 13 kB, against 47 requests and 278 kB in a browser (see [Measured](#measured-loading-the-weekly-timetable)), and nothing at all when opened again. reSIT also caches what rarely changes, removes duplicate requests and limits how many run at once (at most 4 to xSiTe).
 - **A path to more student services, with official access.** With an official API, reSIT could add things that scraping cannot safely do. One example is **tuition-fee payment and reminders**: showing the amount due and the deadline on Home, sending a notification before it falls due, and paying in a few taps. That would encourage prompt fee payment and reduce the follow-up work for the Finance office.
 - **Built by a student, for students,** in the open, with tests and an automated build for every platform.
 
