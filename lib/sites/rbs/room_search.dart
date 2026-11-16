@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/sites/rbs/rbs_parsers.dart';
 import 'package:resit/sites/rbs/rbs_requests.dart';
@@ -95,44 +96,80 @@ class RoomSearch {
     return roomsWithSlotsFromReload(response.body, rooms);
   }
 
-  /// Checks every room separately, [parallel] at a time, and reports each
-  /// room as soon as its answer arrives. One room per request keeps every
-  /// request well under the server's cap of 10 rooms (a single request for
-  /// all rooms silently drops the rest), and running a few at once makes the
-  /// whole search much faster than one big request. A room that fails is
-  /// retried once; if it fails again it's reported with its error, so one
-  /// slow room doesn't sink the search.
+  /// Checks every room, [batchSize] rooms per request and [parallel]
+  /// requests at a time, reporting rooms as their answers arrive. RBS
+  /// silently drops rooms past about 10 in one request, so batches stay well
+  /// under that; batching cuts the number of requests (and rounds) several
+  /// times over compared with one room per request.
+  ///
+  /// Nothing is lost to the cap or to a bad batch: a room missing from its
+  /// batch's answer (dropped, or simply without slots) and every room of a
+  /// batch that fails twice is checked again on its own, retried once, and
+  /// reported with its error if that fails too.
   Stream<RoomCheck> checkEachRoom(
     List<Room> rooms,
     String date,
     String startTime,
     String endTime, {
     int parallel = 6,
+    int batchSize = 5,
     Duration timeout = const Duration(seconds: 20),
   }) {
     late final StreamController<RoomCheck> controller;
     var cancelled = false;
+    final batches = [
+      for (var i = 0; i < rooms.length; i += batchSize) rooms.sublist(i, min(i + batchSize, rooms.length)),
+    ];
     var next = 0;
+    var requests = 0;
+    var singles = 0;
 
-    Future<RoomWithSlots?> checkOne(Room room) async {
+    void report(RoomCheck check) {
+      if (!cancelled) controller.add(check);
+    }
+
+    Future<List<RoomWithSlots>> ask(List<Room> group) async {
       for (var attempt = 1;; attempt++) {
         try {
-          final result = await checkAvailability([room], date, startTime, endTime).timeout(timeout);
-          return result.isEmpty ? null : result.first;
+          requests++;
+          return await checkAvailability(group, date, startTime, endTime).timeout(timeout);
         } catch (e) {
           if (attempt >= 2 || cancelled) rethrow;
         }
       }
     }
 
+    Future<void> checkAlone(Room room) async {
+      singles++;
+      try {
+        final found = await ask([room]);
+        report(RoomCheck(room, result: found.isEmpty ? null : found.first));
+      } catch (e) {
+        report(RoomCheck(room, error: e));
+      }
+    }
+
     Future<void> worker() async {
-      while (!cancelled && next < rooms.length) {
-        final room = rooms[next++];
+      while (!cancelled && next < batches.length) {
+        final group = batches[next++];
+        if (group.length == 1) {
+          await checkAlone(group.single);
+          continue;
+        }
+        Map<String, RoomWithSlots> found;
         try {
-          final result = await checkOne(room);
-          if (!cancelled) controller.add(RoomCheck(room, result: result));
-        } catch (e) {
-          if (!cancelled) controller.add(RoomCheck(room, error: e));
+          found = {for (final r in await ask(group)) r.room.rsrcId: r};
+        } catch (_) {
+          found = const {};
+        }
+        final missing = <Room>[];
+        for (final room in group) {
+          final hit = found[room.rsrcId];
+          hit == null ? missing.add(room) : report(RoomCheck(room, result: hit));
+        }
+        for (final room in missing) {
+          if (cancelled) return;
+          await checkAlone(room);
         }
       }
     }
@@ -142,7 +179,9 @@ class RoomSearch {
         // Validate the session once up front, so the parallel requests don't
         // each re-check it at the same moment.
         await _rbs.requireCsrfToken();
-        await Future.wait([for (var i = 0; i < parallel && i < rooms.length; i++) worker()]);
+        await Future.wait([for (var i = 0; i < parallel && i < batches.length; i++) worker()]);
+        _rbs.auth.note('Room search: ${rooms.length} rooms in $requests requests '
+            '(${batches.length} batches of up to $batchSize, $singles rooms checked alone)');
       } catch (e, st) {
         if (!cancelled) controller.addError(e, st);
       } finally {
