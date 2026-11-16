@@ -10,11 +10,13 @@ import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/features/exams/data/academic_record_service.dart';
 import 'package:resit/core/storage/private_store.dart';
+import 'package:resit/sites/in4sit/exam_parsers.dart';
 import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
 import 'package:resit/features/exams/domain/exam_results.dart';
+import 'package:resit/features/exams/data/exam_results_repository.dart';
 import 'package:resit/features/exams/data/exam_slip_store.dart';
 import 'package:resit/features/exams/domain/academic_record.dart';
 
@@ -107,7 +109,7 @@ void main() {
     final fake = _FakeExams(4, {0, 2});
     final auth = AuthService(
         SessionClient(MockClient((r) async => fake.handle(r) ?? http.Response('nf', 404, request: r))), SecureStorage());
-    final exams = ExamService(auth);
+    final exams = ExamResultsRepository(ExamService(auth));
     final service = AcademicRecordService(exams);
     final progress = <(int, int)?>[];
     service.progress.addListener(() => progress.add(service.progress.value));
@@ -140,10 +142,10 @@ void main() {
     // Kept encrypted (not in plain preferences), and clear() removes the slips.
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getKeys(), isNot(contains('academic_record')));
-    expect(await exams.slips.slip('2025/26 Trimester 1'), isNotNull);
+    expect(await exams.savedSlip('2025/26 Trimester 1'), isNotNull);
     await service.clear();
     expect(await service.saved(), isNull);
-    expect(await exams.slips.slip('2025/26 Trimester 1'), isNull);
+    expect(await exams.savedSlip('2025/26 Trimester 1'), isNull);
     auth.dispose();
   });
 
@@ -151,7 +153,7 @@ void main() {
     final fake = _FakeExams(3, {0, 1, 2}, staleSelectionWins: true);
     final auth = AuthService(
         SessionClient(MockClient((r) async => fake.handle(r) ?? http.Response('nf', 404, request: r))), SecureStorage());
-    final record = await AcademicRecordService(ExamService(auth)).load(force: true);
+    final record = await AcademicRecordService(ExamResultsRepository(ExamService(auth))).load(force: true);
     expect(fake.continues, [2, 1, 0], reason: 'each term read is for that term');
     expect(record!.terms.map((t) => t.name),
         ['AY 2025/26 Trimester 1', 'AY 2025/26 Trimester 2', 'AY 2025/26 Trimester 3']);
@@ -174,7 +176,7 @@ void main() {
     final fake = _FakeExams(2, {0, 1});
     final auth = AuthService(
         SessionClient(MockClient((r) async => fake.handle(r) ?? http.Response('nf', 404, request: r))), SecureStorage());
-    final service = AcademicRecordService(ExamService(auth));
+    final service = AcademicRecordService(ExamResultsRepository(ExamService(auth)));
     await service.load(force: true);
     final good = (await service.saved())!;
     // Write a mixed-up copy (Trimester 2 twice), fetched just now.
@@ -195,7 +197,7 @@ void main() {
     final fake = _FakeExams(2, {0, 1});
     final auth = AuthService(
         SessionClient(MockClient((r) async => fake.handle(r) ?? http.Response('nf', 404, request: r))), SecureStorage());
-    final exams = ExamService(auth);
+    final exams = ExamResultsRepository(ExamService(auth));
     final terms = await exams.terms();
     final r = await exams.results(terms.first);
     expect(r.courses, isNotEmpty);
@@ -211,7 +213,7 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'academic_record': '{"creditsEarned": 12, "fetchedAt": 0, "terms": []}',
     });
-    final service = AcademicRecordService(ExamService(AuthService(SessionClient(), SecureStorage())));
+    final service = AcademicRecordService(ExamResultsRepository(ExamService(AuthService(SessionClient(), SecureStorage()))));
     expect((await service.saved())!.creditsEarned, 12);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('academic_record'), isNull);
@@ -240,12 +242,12 @@ void main() {
     final auth = AuthService(SessionClient(mock), SecureStorage());
     final queue = In4SitQueue();
     final timetable = TimetableService(auth, queue: queue);
-    final examService = ExamService(auth, queue: queue);
+    final examResults = ExamResultsRepository(ExamService(auth, queue: queue));
 
     // Both at once, as at sign-in: they take turns.
     final results = await Future.wait([
       timetable.week(DateTime(2026, 10, 5)),
-      examService.terms(),
+      examResults.terms(),
     ]);
     expect((results[0] as WeekSchedule).sessions.single.courseCode, 'CSC 2101');
     expect(ttGets, 1);
