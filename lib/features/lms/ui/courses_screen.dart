@@ -17,7 +17,9 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
-import 'package:resit/features/lms/ui/course_sections.dart';
+import 'package:resit/features/lms/ui/course_screen.dart';
+import 'package:resit/features/lms/ui/due_tile.dart';
+import 'package:resit/features/lms/ui/sections/announcements_screen.dart';
 import 'package:resit/features/lms/ui/open_in_browser.dart';
 import 'package:resit/core/widgets/desktop.dart';
 

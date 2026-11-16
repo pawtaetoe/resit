@@ -29,7 +29,7 @@ import 'package:resit/features/exams/ui/academic_progress_screen.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
-import 'package:resit/features/lms/ui/course_sections.dart';
+import 'package:resit/features/lms/ui/course_screen.dart';
 import 'package:resit/features/lms/ui/courses_screen.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
