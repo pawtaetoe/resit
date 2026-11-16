@@ -1,13 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/core/providers.dart';
-import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
@@ -15,11 +11,9 @@ import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/timetable/data/module_colours.dart';
-import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/core/widgets/desktop.dart';
-import 'package:resit/features/timetable/domain/class_session.dart';
 import 'package:resit/features/timetable/ui/course_palette.dart';
+import 'package:resit/features/timetable/ui/timetable_view_model.dart';
 import 'package:resit/features/timetable/ui/week_grid.dart';
 import 'package:resit/features/timetable/ui/week_grid_layout.dart';
 
@@ -39,20 +33,35 @@ class TimetableScreen extends StatelessWidget {
       );
 }
 
-class _Timetable extends ConsumerStatefulWidget {
+/// Gives each timetable screen its own [TimetableViewModel]: kept while the
+/// screen shows (signed in or offline), dropped with it.
+class _Timetable extends StatelessWidget {
+  final DateTime? initialDate;
+  final SessionState? offline;
+
+  const _Timetable({this.initialDate, this.offline});
+
+  @override
+  Widget build(BuildContext context) => ProviderScope(
+        overrides: [timetableViewModelProvider.overrideWith(TimetableViewModel.new)],
+        child: _TimetableView(initialDate: initialDate, offline: offline),
+      );
+}
+
+class _TimetableView extends ConsumerStatefulWidget {
   final DateTime? initialDate;
 
   /// Set while not signed in (signing in, or sign-in failed): only saved
   /// weeks are shown and nothing is fetched.
   final SessionState? offline;
 
-  const _Timetable({this.initialDate, this.offline});
+  const _TimetableView({this.initialDate, this.offline});
 
   @override
-  ConsumerState<_Timetable> createState() => _TimetableScreenState();
+  ConsumerState<_TimetableView> createState() => _TimetableViewState();
 }
 
-class _TimetableScreenState extends ConsumerState<_Timetable> {
+class _TimetableViewState extends ConsumerState<_TimetableView> {
   // The week pager is "infinite": page 1000 is the current week.
   static const _initialPage = 1000;
 
@@ -70,93 +79,12 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       _page = _initialPage + (monday.difference(thisMonday).inHours / (24 * 7)).round();
     }
     _pageController = PageController(initialPage: _page);
-    ref.read(timetableWeekStoreProvider).load().then((saved) {
-      if (!mounted) return;
-      setState(() {
-        _saved.addAll(saved..removeWhere((monday, _) => _saved.containsKey(monday)));
-        for (final w in saved.values) {
-          _colourModules(w.week.sessions);
-        }
-      });
-    });
-    _colourStore.load().then((saved) {
-      if (!mounted) return;
-      setState(() {
-        _colours = saved;
-        // Weeks that arrived before the saved colours did.
-        for (final w in _weeks.values) {
-          _colourModules(w.sessions);
-        }
-      });
-    });
   }
-
-  // Weeks are fetched one at a time (the server keeps the page state) and
-  // cached by their Monday.
-  final Map<DateTime, WeekSchedule> _weeks = {};
-
-  /// Weeks saved on the device: shown at once, and when in4SIT can't be
-  /// reached.
-  final Map<DateTime, SavedWeek> _saved = {};
-  final Map<DateTime, Object> _weekErrors = {};
-  final Set<DateTime> _loadingWeeks = {};
-  MfaChallenge? _mfaChallenge;
 
   @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
-  }
-
-  /// Loads a week. [prefetch] is a quiet look-ahead: a failure isn't kept
-  /// as the week's error (it's simply asked for again when shown), and it
-  /// doesn't chain another look-ahead.
-  Future<void> _loadWeek(DateTime monday, {bool force = false, bool prefetch = false}) async {
-    if (widget.offline != null) return;
-    if (_loadingWeeks.contains(monday)) return;
-    if (!force && (_weeks.containsKey(monday) || _weekErrors.containsKey(monday))) return;
-
-    setState(() {
-      _loadingWeeks.add(monday);
-      _weekErrors.remove(monday);
-      if (force) _weeks.clear();
-    });
-
-    final service = ref.read(timetableServiceProvider);
-    Future<WeekSchedule> fetch() => service.week(
-          monday,
-          onMfaChallenge: (challenge) {
-            if (mounted) setState(() => _mfaChallenge = challenge);
-          },
-        );
-
-    try {
-      if (force) service.reset();
-      final week = await (prefetch ? service.week(monday) : withSignInRetry(ref, fetch, beforeRetry: service.reset));
-      if (!mounted) return;
-      setState(() {
-        _weeks[monday] = week;
-        _saved[monday] = SavedWeek(week, DateTime.now());
-        _colourModules(week.sessions);
-      });
-      unawaited(ref.read(timetableWeekStoreProvider).save(week));
-      // Swiping on is the likely next step: fetch the following week behind
-      // this one (in4SIT takes one request at a time, so it just queues).
-      if (!prefetch) {
-        final next = DateTime(monday.year, monday.month, monday.day + 7);
-        if (!_weeks.containsKey(next)) unawaited(_loadWeek(next, prefetch: true));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      if (!prefetch) setState(() => _weekErrors[monday] = e);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingWeeks.remove(monday);
-          _mfaChallenge = null;
-        });
-      }
-    }
   }
 
   DateTime _weekStart(int page) {
@@ -181,37 +109,24 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     );
   }
 
-  /// Module → colour, kept on the device so each module keeps its colour.
-  Map<String, int> _colours = {};
-  final _colourStore = ModuleColourStore();
-
-  /// Gives the modules in [sessions] a colour if they don't have one yet.
-  void _colourModules(Iterable<ClassSession> sessions) {
-    final updated = assignModuleColours(_colours, sessions.map((s) => s.courseCode), CoursePalette.colours.length);
-    if (updated.length == _colours.length) return;
-    _colours = updated;
-    _colourStore.save(updated);
-  }
-
   Widget _buildWeekPage(int page) {
     final monday = _weekStart(page);
-    final live = _weeks[monday];
-    final saved = live == null ? _saved[monday] : null;
-    final week = live ?? saved?.week;
-    final error = _weekErrors[monday];
-    final loading = _loadingWeeks.contains(monday);
+    final timetable = ref.watch(timetableViewModelProvider);
+    final viewModel = ref.read(timetableViewModelProvider.notifier);
+    final TimetableWeek(:live, :saved, :error, :loading, schedule: week) = timetable.weekOf(monday);
     final offline = widget.offline;
 
     if (offline == null && live == null && error == null && !loading) {
       // Not requested yet: fetch it once this page is built.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadWeek(monday);
+        if (mounted && widget.offline == null) viewModel.loadWeek(monday);
       });
     }
 
     // MFA from in4SIT's own sign-in, or from the automatic sign-in retry.
     final sessionState = ref.watch(sessionControllerProvider);
-    final challenge = _mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
+    final challenge =
+        timetable.mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
     if (challenge != null && loading) {
       return Center(
         child: Padding(
@@ -237,7 +152,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     if (week == null && error != null) {
       final session = isSessionError(error);
       final retry = FilledButton.icon(
-        onPressed: () => _loadWeek(monday, force: true),
+        onPressed: () => viewModel.refresh(monday),
         icon: const Icon(Icons.refresh),
         label: const Text('Try again'),
       );
@@ -271,7 +186,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
           action: !failed
               ? null
               : offline == null
-                  ? TextButton(onPressed: () => _loadWeek(monday, force: true), child: const Text('Retry'))
+                  ? TextButton(onPressed: () => viewModel.refresh(monday), child: const Text('Retry'))
                   : TextButton(onPressed: _signInAgain, child: const Text('Retry')),
         ),
       );
@@ -281,7 +196,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       children: [
         RefreshStrip(active: loading || (offline != null && offline.busy)),
         if (banner != null) banner,
-        Expanded(child: WeekGrid(monday: monday, week: week, palette: CoursePalette(_colours))),
+        Expanded(child: WeekGrid(monday: monday, week: week, palette: CoursePalette(timetable.colours))),
       ],
     );
   }
@@ -298,7 +213,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   Widget build(BuildContext context) {
     final monday = _weekStart(_page);
     final thisWeek = _page == _initialPage;
-    final loading = _loadingWeeks.contains(monday);
+    final loading = ref.watch(timetableViewModelProvider).loading.contains(monday);
 
     return AppScaffold(
       appBar: thumbAppBar(
@@ -334,7 +249,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
                   ? (widget.offline!.busy ? null : _signInAgain)
                   : loading
                       ? null
-                      : () => _loadWeek(monday, force: true),
+                      : () => ref.read(timetableViewModelProvider.notifier).refresh(monday),
             ),
           ],
         ),
