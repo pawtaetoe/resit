@@ -1,39 +1,11 @@
 import 'dart:convert';
 
 import 'package:resit/features/lms/domain/activities.dart';
-import 'package:resit/features/lms/domain/courses.dart';
+import 'package:resit/sites/xsite/brightspace_json.dart';
 
-// Reading xSiTe's replies into the app's models. xSiTe is Brightspace; these
-// are its documented "Valence" API routes under /d2l/api/ and the course
-// widgets' JSON.
-
-/// Plain text of a Brightspace rich-text block ({Text, Html}), or of a bare
-/// string.
-String richText(Object? v) {
-  if (v is String) return v.trim();
-  if (v is Map) {
-    final text = v['Text'];
-    if (text is String && text.trim().isNotEmpty) return text.trim();
-    // Some blocks nest the text one level down: {Text: {Text, Html}}.
-    if (text is Map) return richText(text);
-    final html = v['Html'];
-    if (html is String) return htmlToText(html);
-  }
-  return '';
-}
-
-/// Rough plain text from HTML: tags dropped, common entities decoded,
-/// paragraphs kept apart.
-String htmlToText(String html) {
-  var s = html
-      .replaceAll(RegExp(r'<(br|/p|/div|/li|/h\d)\b[^>]*>', caseSensitive: false), '\n')
-      .replaceAll(RegExp(r'<li\b[^>]*>', caseSensitive: false), '• ')
-      .replaceAll(RegExp(r'<[^>]+>'), '');
-  const entities = {'&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&apos;': "'"};
-  entities.forEach((k, v) => s = s.replaceAll(k, v));
-  s = s.replaceAllMapped(RegExp(r'&#(\d+);'), (m) => String.fromCharCode(int.parse(m[1]!)));
-  return s.replaceAll(RegExp(r'[ \t]+'), ' ').replaceAll(RegExp(r'\n\s*\n\s*(\n\s*)+'), '\n\n').trim();
-}
+// Reading xSiTe's course activity replies (announcements, assignments,
+// quizzes, grades, groups) into the app's models, from Brightspace's
+// documented "Valence" API routes under /d2l/api/.
 
 DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v)?.toLocal() : null;
 int? _int(Object? v) => v is num ? v.toInt() : (v is String ? int.tryParse(v) : null);
@@ -53,73 +25,6 @@ List<Map<String, Object?>> _list(Object? json) {
   ];
 }
 
-/// A course from an xSiTe course record.
-LmsCourse lmsCourseFromJson(Map<String, Object?> j) {
-  DateTime? date(String key) {
-    final v = j[key];
-    return v is String ? DateTime.tryParse(v)?.toLocal() : null;
-  }
-
-  final image = j['FormattedImageLink'];
-  return LmsCourse(
-    orgUnitId: '${j['OrgUnitId']}',
-    name: (j['Name'] as String? ?? '').trim(),
-    code: j['Code'] as String? ?? '',
-    semester: j['SemesterName'] as String? ?? '',
-    start: date('StartDate'),
-    end: date('EndDate'),
-    isActive: j['IsActive'] as bool? ?? true,
-    canAccess: j['CanAccessCourse'] as bool? ?? true,
-    lastAccessed: date('LastAccessed'),
-    imagePath: image is String && image.isNotEmpty ? image : null,
-  );
-}
-
-/// A content item's completion record.
-ContentItem contentItemFromJson(Map<String, Object?> j) => ContentItem(
-      orgUnitId: '${j['OrgUnitId']}',
-      objectId: (j['ObjectId'] as num?)?.toInt() ?? 0,
-      title: (j['Title'] as String? ?? '').trim(),
-      required: (j['RequiredItems'] as num?)?.toInt() ?? 0,
-      completed: (j['CompletedItems'] as num?)?.toInt() ?? 0,
-    );
-
-/// A content topic, or null if it's hidden.
-ContentTopic? contentTopicFromJson(String orgUnitId, Map<String, Object?> j) {
-  if (j['IsHidden'] == true) return null;
-  final description = j['Description'];
-  return ContentTopic(
-    orgUnitId: orgUnitId,
-    id: (j['TopicId'] as num?)?.toInt() ?? 0,
-    title: (j['Title'] as String? ?? '').trim(),
-    type: j['TypeIdentifier'] as String? ?? '',
-    url: j['Url'] as String? ?? '',
-    unread: j['Unread'] as bool? ?? false,
-    description: description is Map ? (description['Text'] as String? ?? '').trim() : '',
-  );
-}
-
-/// A content folder with its topics and sub-folders, or null if it's hidden.
-ContentModule? contentModuleFromJson(String orgUnitId, Map<String, Object?> j) {
-  if (j['IsHidden'] == true) return null;
-  int order(Object? o) => o is Map ? (o['SortOrder'] as num?)?.toInt() ?? 0 : 0;
-  List<Map<String, Object?>> sorted(Object? list) =>
-      [for (final o in (list as List? ?? const [])) if (o is Map) o.cast<String, Object?>()]
-        ..sort((a, b) => order(a).compareTo(order(b)));
-  return ContentModule(
-    id: (j['ModuleId'] as num?)?.toInt() ?? 0,
-    title: (j['Title'] as String? ?? '').trim(),
-    modules: [
-      for (final m in sorted(j['Modules']))
-        if (contentModuleFromJson(orgUnitId, m) case final module?) module,
-    ],
-    topics: [
-      for (final t in sorted(j['Topics']))
-        if (contentTopicFromJson(orgUnitId, t) case final topic?) topic,
-    ],
-  );
-}
-
 /// A grade value record.
 GradeEntry gradeEntryFromJson(Map<String, Object?> j) => GradeEntry(
       id: _int(j['GradeObjectIdentifier']),
@@ -132,46 +37,6 @@ GradeEntry gradeEntryFromJson(Map<String, Object?> j) => GradeEntry(
       weightedOutOf: _double(j['WeightedDenominator']),
       comment: richText(j['Comments']),
     );
-
-/// The items in one page of xSiTe's completion counts, and the next page's
-/// address (null on the last page).
-({List<ContentItem> items, String? next}) parseCompletions(String body) {
-  final json = jsonDecode(stripGuard(body));
-  final list = (json is Map ? json['Objects'] : null) as List? ?? const [];
-  final next = json is Map ? json['Next'] : null;
-  return (
-    items: [
-      for (final o in list)
-        if (o is Map) contentItemFromJson(o.cast<String, Object?>()),
-    ],
-    next: next is String && next.isNotEmpty ? next : null,
-  );
-}
-
-/// A course's table of contents: its top-level folders, in course order.
-List<ContentModule> parseToc(String orgUnitId, String body) {
-  final json = jsonDecode(stripGuard(body));
-  final list = (json is Map ? json['Modules'] : null) as List? ?? const [];
-  return contentModuleFromJson(orgUnitId, {'Modules': list})?.modules ?? const [];
-}
-
-/// Courses from xSiTe's "My Courses" list, newest term first and, within a
-/// term, the most recently opened first.
-List<LmsCourse> parseMyCourses(String body) {
-  final json = jsonDecode(stripGuard(body));
-  final list = (json is Map ? json['Courses'] : null) as List? ?? const [];
-  return [
-    for (final c in list)
-      if (c is Map) lmsCourseFromJson(c.cast<String, Object?>()),
-  ];
-}
-
-/// Some Brightspace APIs put `while(1);` before JSON so it can't be loaded as
-/// a script; drop it if present.
-String stripGuard(String body) {
-  final t = body.trimLeft();
-  return t.startsWith('while(1);') ? t.substring('while(1);'.length) : t;
-}
 
 /// A course's announcements ("news"), newest first, without hidden or
 /// unpublished ones.

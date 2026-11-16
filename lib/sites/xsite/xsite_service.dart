@@ -1,27 +1,18 @@
-import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
 import 'package:resit/sites/adfs/auth_service.dart';
-import 'package:resit/core/network/session_client.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
-import 'package:resit/sites/xsite/xsite_parsers.dart';
+import 'package:resit/sites/xsite/xsite_client.dart';
+import 'package:resit/sites/xsite/activity_parsers.dart';
+import 'package:resit/sites/xsite/brightspace_json.dart';
+import 'package:resit/sites/xsite/course_parsers.dart';
+
+export 'package:resit/sites/xsite/lms_unavailable_exception.dart' show LmsUnavailableException;
 
 /// Reads xSiTe with the same SIT single sign-on as in4SIT: xSiTe hands off
 /// to SIT's ADFS, which already knows the user, and back.
-/// A course tool xSiTe won't give the app (not used in the course, or not
-/// open to students), as opposed to being signed out.
-class LmsUnavailableException implements Exception {
-  final String path;
-  LmsUnavailableException(this.path);
-
-  @override
-  String toString() => "This isn't available for this course on xSiTe.";
-}
-
 class LmsService {
   static const base = xsiteBase;
 
@@ -34,9 +25,6 @@ class LmsService {
     }
     return uri;
   }
-
-  /// Starts xSiTe's SIT sign-in (SAML via ADFS).
-  static final samlLogin = Uri.parse('$base/d2l/lp/auth/saml/login?target=%2fd2l%2fhome');
 
   /// The list the "My Courses" widget on xSiTe's home page shows.
   static Uri myCoursesUrl({String? bookmark}) => Uri.parse('$base/d2l/le/manageCourses/api/mycourses').replace(
@@ -65,19 +53,11 @@ class LmsService {
   final DateTime Function() _now;
   ({DateTime at, List<LmsCourse> courses})? _courses;
   Future<List<LmsCourse>>? _coursesInFlight;
-  late final _Limiter _limit = _Limiter(maxInFlight);
+  final XsiteClient _xsite;
 
-  /// The xSiTe sign-in under way, shared by every request that finds xSiTe
-  /// signed out meanwhile.
-  Future<void>? _signingIn;
-
-  /// xSiTe sign-ins finished so far, to tell whether one happened while a
-  /// request was out.
-  var _signIns = 0;
-
-  LmsService(this.auth, {DateTime Function()? now}) : _now = now ?? DateTime.now;
-
-  SessionClient get _client => auth.client;
+  LmsService(this.auth, {DateTime Function()? now})
+      : _now = now ?? DateTime.now,
+        _xsite = XsiteClient(auth, maxInFlight: maxInFlight);
 
   /// Every course on xSiTe, signing in to xSiTe first if needed. Reused for
   /// [coursesTtl]; [force] asks xSiTe again.
@@ -106,7 +86,7 @@ class LmsService {
     String? bookmark;
     // A few pages at most; stop if a page adds nothing new.
     for (var page = 0; page < 5; page++) {
-      final body = await _getJson(myCoursesUrl(bookmark: bookmark), onMfaChallenge);
+      final body = await _xsite.getJson(myCoursesUrl(bookmark: bookmark), onMfaChallenge);
       final json = jsonDecode(stripGuard(body));
       final before = all.length;
       for (final c in parseMyCourses(body)) {
@@ -124,7 +104,7 @@ class LmsService {
     final items = <ContentItem>[];
     Uri? url = Uri.parse('$base/d2l/api/le/1.75/$orgUnitId/content/completions/mycount/?level=3');
     for (var page = 0; page < 10 && url != null; page++) {
-      final parsed = parseCompletions(await _getJson(url, onMfaChallenge, limited: true));
+      final parsed = parseCompletions(await _xsite.getJson(url, onMfaChallenge, limited: true));
       items.addAll(parsed.items);
       final next = parsed.next;
       url = next == null ? null : onXsite(next);
@@ -135,7 +115,7 @@ class LmsService {
   /// The course's content, folder by folder.
   Future<List<ContentModule>> contents(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async {
     final url = Uri.parse('$base/d2l/api/le/1.75/$orgUnitId/content/toc');
-    return parseToc(orgUnitId, await _getJson(url, onMfaChallenge, limited: true));
+    return parseToc(orgUnitId, await _xsite.getJson(url, onMfaChallenge, limited: true));
   }
 
   // --- Course activities (announcements, assignments, quizzes, grades, groups)
@@ -144,7 +124,7 @@ class LmsService {
   static const _lp = '$base/d2l/api/lp/1.47';
 
   Future<String> _api(String url, void Function(MfaChallenge)? onMfaChallenge) =>
-      _getJson(Uri.parse(url), onMfaChallenge, limited: true);
+      _xsite.getJson(Uri.parse(url), onMfaChallenge, limited: true);
 
   /// A course's announcements, newest first.
   Future<List<Announcement>> announcements(String orgUnitId, {void Function(MfaChallenge)? onMfaChallenge}) async =>
@@ -243,7 +223,7 @@ class LmsService {
       try {
         final uri = onXsite(path);
         final sized = uri.replace(queryParameters: {...uri.queryParameters, 'width': '$size', 'height': '$size'});
-        final resp = await _limit(() => _client.get(sized));
+        final resp = await _xsite.getLimited(sized);
         final type = resp.headers['content-type'] ?? '';
         if (resp.statusCode != 200 || !type.startsWith('image/')) return null;
         return resp.bodyBytes;
@@ -251,106 +231,5 @@ class LmsService {
         return null;
       }
     });
-  }
-
-  /// GETs an xSiTe API; if xSiTe isn't signed in yet (it answers with its
-  /// login page instead of JSON), signs in through ADFS and asks again. When
-  /// several requests find xSiTe signed out at once, one signs in and the
-  /// others wait for it, then ask again. [limited] requests take turns
-  /// within [maxInFlight].
-  Future<String> _getJson(Uri url, void Function(MfaChallenge)? onMfaChallenge, {bool limited = false}) async {
-    Future<http.Response> get() => limited ? _limit(() => _client.get(url)) : _client.get(url);
-    String ok(String body) {
-      _lastOk = DateTime.now();
-      return body;
-    }
-
-    final signInsBefore = _signIns;
-    var resp = await get();
-    var body = resp.body;
-    if (_isJson(resp.statusCode, resp.headers, body)) return ok(body);
-    // Signed in a moment ago, so "forbidden" or "not found" is about this
-    // tool (not used in the course, or closed to students), not the session.
-    if (_refused(resp, url) && _lastOk != null && DateTime.now().difference(_lastOk!) < const Duration(minutes: 5)) {
-      throw LmsUnavailableException(url.path);
-    }
-
-    final pending = _signingIn;
-    if (pending != null || _signIns != signInsBefore) {
-      // Someone else is signing in, or did while this was out: wait for
-      // them, then ask again.
-      await pending;
-      resp = await get();
-      body = resp.body;
-      if (_isJson(resp.statusCode, resp.headers, body)) return ok(body);
-    } else {
-      debugLog('xSiTe: not signed in (status ${resp.statusCode}, at ${resp.request?.url.path}); signing in');
-      // Waiters only need to know it's over; this request reports any error.
-      final done = Completer<void>();
-      _signingIn = done.future;
-      try {
-        resp = await auth.getWithSso(samlLogin, thenGet: url, onMfaChallenge: onMfaChallenge);
-      } finally {
-        _signingIn = null;
-        _signIns++;
-        done.complete();
-      }
-      body = resp.body;
-      if (_isJson(resp.statusCode, resp.headers, body)) return ok(body);
-    }
-    // Still refused after signing in: the tool isn't available, not the session.
-    if (_refused(resp, url)) throw LmsUnavailableException(url.path);
-
-    final landed = resp.request?.url;
-    throw SessionExpiredException(
-        "xSiTe didn't sign in${landed == null ? '' : ' (ended on ${landed.host}${landed.path})'}.");
-  }
-
-  /// When xSiTe last answered with data, i.e. was certainly signed in.
-  DateTime? _lastOk;
-
-  /// A 403/404 from the address asked for itself (not a sign-in page).
-  static bool _refused(http.Response resp, Uri url) {
-    final landed = resp.request?.url;
-    return (resp.statusCode == 403 || resp.statusCode == 404) &&
-        landed != null &&
-        landed.host == url.host &&
-        landed.path == url.path;
-  }
-
-  static bool _isJson(int status, Map<String, String> headers, String body) {
-    if (status != 200) return false;
-    final type = headers['content-type'] ?? '';
-    final t = stripGuard(body);
-    return type.contains('json') || t.startsWith('{') || t.startsWith('[');
-  }
-}
-
-/// Lets at most [max] tasks run at once; the rest wait their turn.
-class _Limiter {
-  final int max;
-  var _running = 0;
-  final _waiting = Queue<Completer<void>>();
-
-  _Limiter(this.max);
-
-  Future<T> call<T>(Future<T> Function() task) async {
-    if (_running >= max) {
-      final turn = Completer<void>();
-      _waiting.add(turn);
-      await turn.future;
-    } else {
-      _running++;
-    }
-    try {
-      return await task();
-    } finally {
-      // Hand the slot straight to the next in line, or free it.
-      if (_waiting.isNotEmpty) {
-        _waiting.removeFirst().complete();
-      } else {
-        _running--;
-      }
-    }
   }
 }
