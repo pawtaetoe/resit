@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/sites/sit_website/academic_calendar_parsers.dart';
 import 'package:resit/sites/sit_website/academic_calendar_service.dart';
 
 void main() {

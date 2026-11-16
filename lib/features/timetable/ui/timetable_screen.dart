@@ -1,13 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/core/providers.dart';
-import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
@@ -15,10 +11,11 @@ import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/timetable/data/module_colours.dart';
-import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/core/widgets/desktop.dart';
-import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/timetable/ui/course_palette.dart';
+import 'package:resit/features/timetable/ui/timetable_view_model.dart';
+import 'package:resit/features/timetable/ui/week_grid.dart';
+import 'package:resit/features/timetable/ui/week_grid_layout.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
 /// [initialDate] (this week by default). Signs in first if needed.
@@ -36,48 +33,37 @@ class TimetableScreen extends StatelessWidget {
       );
 }
 
-class _Timetable extends ConsumerStatefulWidget {
+/// Gives each timetable screen its own [TimetableViewModel]: kept while the
+/// screen shows (signed in or offline), dropped with it.
+class _Timetable extends StatelessWidget {
+  final DateTime? initialDate;
+  final SessionState? offline;
+
+  const _Timetable({this.initialDate, this.offline});
+
+  @override
+  Widget build(BuildContext context) => ProviderScope(
+        overrides: [timetableViewModelProvider.overrideWith(TimetableViewModel.new)],
+        child: _TimetableView(initialDate: initialDate, offline: offline),
+      );
+}
+
+class _TimetableView extends ConsumerStatefulWidget {
   final DateTime? initialDate;
 
   /// Set while not signed in (signing in, or sign-in failed): only saved
   /// weeks are shown and nothing is fetched.
   final SessionState? offline;
 
-  const _Timetable({this.initialDate, this.offline});
+  const _TimetableView({this.initialDate, this.offline});
 
   @override
-  ConsumerState<_Timetable> createState() => _TimetableScreenState();
+  ConsumerState<_TimetableView> createState() => _TimetableViewState();
 }
 
-/// Course colours: eight hues that sit with the logo's navy and teal, all
-/// dark enough for white text (at least 5.9:1). A course keeps its colour.
-const _courseColors = [
-  Color(0xFF2B5DA8), // blue
-  Color(0xFF0B6E78), // teal
-  Color(0xFF2E7048), // green
-  Color(0xFF6447A8), // purple
-  Color(0xFF963A6A), // plum
-  Color(0xFF9A4A0C), // amber
-  Color(0xFF45607A), // slate
-  Color(0xFF3B47A0), // indigo
-];
-
-class _PlacedSession {
-  final ClassSession session;
-  final int lane;
-  final int laneCount;
-
-  _PlacedSession(this.session, this.lane, this.laneCount);
-}
-
-class _TimetableScreenState extends ConsumerState<_Timetable> {
+class _TimetableViewState extends ConsumerState<_TimetableView> {
   // The week pager is "infinite": page 1000 is the current week.
   static const _initialPage = 1000;
-  static const _timeColumnWidth = 44.0;
-  static const _dayCount = 5; // Monday to Friday
-
-  /// An hour's height: grows with the user's text size, so class text fits.
-  double get _hourHeight => MediaQuery.textScalerOf(context).scale(60).clamp(60.0, 132.0);
 
   late final PageController _pageController;
   late int _page;
@@ -93,93 +79,12 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       _page = _initialPage + (monday.difference(thisMonday).inHours / (24 * 7)).round();
     }
     _pageController = PageController(initialPage: _page);
-    ref.read(timetableWeekStoreProvider).load().then((saved) {
-      if (!mounted) return;
-      setState(() {
-        _saved.addAll(saved..removeWhere((monday, _) => _saved.containsKey(monday)));
-        for (final w in saved.values) {
-          _colourModules(w.week.sessions);
-        }
-      });
-    });
-    _colourStore.load().then((saved) {
-      if (!mounted) return;
-      setState(() {
-        _colours = saved;
-        // Weeks that arrived before the saved colours did.
-        for (final w in _weeks.values) {
-          _colourModules(w.sessions);
-        }
-      });
-    });
   }
-
-  // Weeks are fetched one at a time (the server keeps the page state) and
-  // cached by their Monday.
-  final Map<DateTime, WeekSchedule> _weeks = {};
-
-  /// Weeks saved on the device: shown at once, and when in4SIT can't be
-  /// reached.
-  final Map<DateTime, SavedWeek> _saved = {};
-  final Map<DateTime, Object> _weekErrors = {};
-  final Set<DateTime> _loadingWeeks = {};
-  MfaChallenge? _mfaChallenge;
 
   @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
-  }
-
-  /// Loads a week. [prefetch] is a quiet look-ahead: a failure isn't kept
-  /// as the week's error (it's simply asked for again when shown), and it
-  /// doesn't chain another look-ahead.
-  Future<void> _loadWeek(DateTime monday, {bool force = false, bool prefetch = false}) async {
-    if (widget.offline != null) return;
-    if (_loadingWeeks.contains(monday)) return;
-    if (!force && (_weeks.containsKey(monday) || _weekErrors.containsKey(monday))) return;
-
-    setState(() {
-      _loadingWeeks.add(monday);
-      _weekErrors.remove(monday);
-      if (force) _weeks.clear();
-    });
-
-    final service = ref.read(timetableServiceProvider);
-    Future<WeekSchedule> fetch() => service.week(
-          monday,
-          onMfaChallenge: (challenge) {
-            if (mounted) setState(() => _mfaChallenge = challenge);
-          },
-        );
-
-    try {
-      if (force) service.reset();
-      final week = await (prefetch ? service.week(monday) : withSignInRetry(ref, fetch, beforeRetry: service.reset));
-      if (!mounted) return;
-      setState(() {
-        _weeks[monday] = week;
-        _saved[monday] = SavedWeek(week, DateTime.now());
-        _colourModules(week.sessions);
-      });
-      unawaited(ref.read(timetableWeekStoreProvider).save(week));
-      // Swiping on is the likely next step: fetch the following week behind
-      // this one (in4SIT takes one request at a time, so it just queues).
-      if (!prefetch) {
-        final next = DateTime(monday.year, monday.month, monday.day + 7);
-        if (!_weeks.containsKey(next)) unawaited(_loadWeek(next, prefetch: true));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      if (!prefetch) setState(() => _weekErrors[monday] = e);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingWeeks.remove(monday);
-          _mfaChallenge = null;
-        });
-      }
-    }
   }
 
   DateTime _weekStart(int page) {
@@ -189,7 +94,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   }
 
   String _weekLabel(DateTime monday) {
-    final friday = DateTime(monday.year, monday.month, monday.day + _dayCount - 1);
+    final friday = DateTime(monday.year, monday.month, monday.day + WeekGridLayout.dayCount - 1);
     final sameYear = monday.year == friday.year;
     final start = DateFormat(sameYear ? 'd MMM' : 'd MMM yyyy').format(monday);
     final end = DateFormat('d MMM yyyy').format(friday);
@@ -204,329 +109,24 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     );
   }
 
-  /// Module → colour, kept on the device so each module keeps its colour.
-  Map<String, int> _colours = {};
-  final _colourStore = ModuleColourStore();
-
-  /// Gives the modules in [sessions] a colour if they don't have one yet.
-  void _colourModules(Iterable<ClassSession> sessions) {
-    final updated = assignModuleColours(_colours, sessions.map((s) => s.courseCode), _courseColors.length);
-    if (updated.length == _colours.length) return;
-    _colours = updated;
-    _colourStore.save(updated);
-  }
-
-  Color _courseColor(String code) =>
-      _courseColors[(_colours[moduleKey(code)] ?? code.hashCode.abs()) % _courseColors.length];
-
-  /// Lays out one day's sessions side by side where they overlap in time.
-  List<_PlacedSession> _layoutDay(List<ClassSession> sessions) {
-    final sorted = [...sessions]..sort((a, b) => a.startMin.compareTo(b.startMin));
-    final placed = <_PlacedSession>[];
-
-    var cluster = <ClassSession>[];
-    var clusterEnd = 0;
-
-    void flush() {
-      final laneEnds = <int>[];
-      final lanes = <int>[];
-      for (final s in cluster) {
-        var lane = laneEnds.indexWhere((end) => end <= s.startMin);
-        if (lane == -1) {
-          laneEnds.add(s.endMin);
-          lane = laneEnds.length - 1;
-        } else {
-          laneEnds[lane] = s.endMin;
-        }
-        lanes.add(lane);
-      }
-      for (var i = 0; i < cluster.length; i++) {
-        placed.add(_PlacedSession(cluster[i], lanes[i], laneEnds.length));
-      }
-      cluster = [];
-    }
-
-    for (final s in sorted) {
-      if (cluster.isNotEmpty && s.startMin >= clusterEnd) flush();
-      cluster.add(s);
-      clusterEnd = cluster.length == 1 ? s.endMin : (s.endMin > clusterEnd ? s.endMin : clusterEnd);
-    }
-    if (cluster.isNotEmpty) flush();
-    return placed;
-  }
-
-  void _showDetails(ClassSession s) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      // Sized to its content (not capped at half the screen), so larger text
-      // sizes aren't cut off; it scrolls if it's taller than the screen.
-      isScrollControlled: true,
-      // Keeps the details clear of the system navigation bar.
-      builder: (_) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(s.courseCode, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              _detailRow(Icons.class_outlined, '${s.component} · ${s.section}'),
-              _detailRow(Icons.calendar_today_outlined, DateFormat('EEEE, d MMM yyyy').format(s.date)),
-              _detailRow(Icons.schedule, s.timeLabel),
-              if (s.location.isNotEmpty) _detailRow(Icons.place_outlined, s.location),
-              if (s.coinciding) ...[
-                const SizedBox(height: 8),
-                const StatusPill(
-                  label: 'Clashes with another class',
-                  tone: Tone.warning,
-                  icon: Icons.warning_amber_rounded,
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _detailRow(IconData icon, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            const SizedBox(width: 12),
-            Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyLarge)),
-          ],
-        ),
-      );
-
-  Widget _buildGrid(DateTime monday, WeekSchedule? week) {
-    final today = DateTime.now();
-    final sessions = week?.sessions ?? const <ClassSession>[];
-
-    final minStart = sessions.map((s) => s.startMin).fold<int>(8 * 60, (a, b) => a < b ? a : b);
-    final maxEnd = sessions.map((s) => s.endMin).fold<int>(18 * 60, (a, b) => a > b ? a : b);
-    final startHour = minStart ~/ 60;
-    final endHour = (maxEnd + 59) ~/ 60;
-    final hourHeight = _hourHeight;
-    final gridHeight = (endHour - startHour) * hourHeight;
-
-    return LayoutBuilder(builder: (context, constraints) {
-      final colWidth = (constraints.maxWidth - _timeColumnWidth) / _dayCount;
-      final theme = Theme.of(context);
-      final scheme = theme.colorScheme;
-      final small = theme.textTheme.labelSmall;
-      final muted = scheme.onSurfaceVariant;
-      final nowDate = DateTime(today.year, today.month, today.day);
-      final todayIndex = nowDate.difference(monday).inDays;
-      final nowMin = today.hour * 60 + today.minute;
-      final showNow = todayIndex >= 0 && todayIndex < _dayCount && nowMin >= startHour * 60 && nowMin <= endHour * 60;
-
-      final header = Row(
-        children: [
-          const SizedBox(width: _timeColumnWidth),
-          for (var d = 0; d < _dayCount; d++)
-            Builder(builder: (_) {
-              final date = DateTime(monday.year, monday.month, monday.day + d);
-              final isToday = date.year == today.year && date.month == today.month && date.day == today.day;
-              return SizedBox(
-                width: colWidth,
-                child: Column(
-                  children: [
-                    Text(DateFormat('E').format(date), style: small?.copyWith(color: isToday ? scheme.primary : muted)),
-                    const SizedBox(height: 2),
-                    CircleAvatar(
-                      radius: 13,
-                      backgroundColor: isToday ? scheme.primary : Colors.transparent,
-                      child: Text(
-                        '${date.day}',
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: isToday ? scheme.onPrimary : scheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    if (date.day == 1 || d == 0) Text(DateFormat('MMM').format(date), style: small?.copyWith(color: muted)),
-                  ],
-                ),
-              );
-            }),
-        ],
-      );
-
-      final grid = SizedBox(
-        height: gridHeight,
-        child: Stack(
-          children: [
-            for (var h = startHour; h <= endHour; h++)
-              Positioned(
-                top: (h - startHour) * hourHeight,
-                left: 0,
-                right: 0,
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: _timeColumnWidth,
-                      child: Transform.translate(
-                        offset: const Offset(0, -7),
-                        child: Text(
-                          '${h.toString().padLeft(2, '0')}:00',
-                          textAlign: TextAlign.center,
-                          style: small?.copyWith(color: muted),
-                        ),
-                      ),
-                    ),
-                    Expanded(child: Divider(height: 1, color: scheme.outlineVariant)),
-                  ],
-                ),
-              ),
-            for (var d = 0; d < _dayCount; d++) ...[
-              if (d > 0)
-                Positioned(
-                  left: _timeColumnWidth + d * colWidth,
-                  top: 0,
-                  bottom: 0,
-                  child: VerticalDivider(width: 1, color: scheme.outlineVariant.withValues(alpha: 0.6)),
-                ),
-              if (week != null)
-                for (final placed in _layoutDay(week.forDay(d)))
-                  Builder(builder: (_) {
-                    final s = placed.session;
-                    final laneWidth = colWidth / placed.laneCount;
-                    final color = _courseColor(s.courseCode);
-                    // At least 40 px tall, so a short class is still easy to tap.
-                    final height = ((s.endMin - s.startMin) / 60 * hourHeight - 2).clamp(40.0, double.infinity);
-                    return Positioned(
-                      left: _timeColumnWidth + d * colWidth + placed.lane * laneWidth + 1,
-                      top: (s.startMin - startHour * 60) / 60 * hourHeight + 1,
-                      width: laneWidth - 2,
-                      height: height,
-                      // One node for screen readers, with the tap on it.
-                      child: Semantics(
-                        button: true,
-                        label: '${s.courseCode} ${s.component}, ${s.timeLabel}, ${s.location}'
-                            '${s.coinciding ? ', clashes with another class' : ''}',
-                        excludeSemantics: true,
-                        onTap: () => _showDetails(s),
-                        child: GestureDetector(
-                          excludeFromSemantics: true,
-                          onTap: () => _showDetails(s),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: color,
-                              borderRadius: BorderRadius.circular(6),
-                              // A clash shows as an orange outline and a warning sign.
-                              border: s.coinciding ? Border.all(color: scheme.tertiary, width: 2) : null,
-                            ),
-                            child: Text.rich(
-                              TextSpan(children: [
-                                if (s.coinciding) const TextSpan(text: '⚠ '),
-                                TextSpan(text: '${s.courseCode}\n', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                TextSpan(text: '${s.component}\n${s.location}'),
-                              ]),
-                              overflow: TextOverflow.clip,
-                              style: small?.copyWith(color: Colors.white, height: 1.2, letterSpacing: 0),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
-            ],
-            if (showNow)
-              Positioned(
-                left: _timeColumnWidth + todayIndex * colWidth - 4,
-                width: colWidth + 4,
-                top: (nowMin - startHour * 60) / 60 * hourHeight - 4,
-                child: IgnorePointer(
-                  child: Row(
-                    children: [
-                      CircleAvatar(radius: 4, backgroundColor: scheme.error),
-                      Expanded(child: Container(height: 2, color: scheme.error)),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
-      );
-
-      return Column(
-        children: [
-          Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: header),
-          // Which colour is which module this week.
-          if (sessions.isNotEmpty)
-            SizedBox(
-              height: 28,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  for (final code in {for (final s in sessions) s.courseCode}.toList()..sort())
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(color: _courseColor(code), borderRadius: BorderRadius.circular(3)),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(code, style: small?.copyWith(color: scheme.onSurface)),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          const Divider(height: 1),
-          Expanded(
-            child: Stack(
-              children: [
-                // Room at the top so the first hour's label isn't clipped.
-                SingleChildScrollView(padding: const EdgeInsets.only(top: 10, bottom: 8), child: grid),
-                if (week != null && week.sessions.isEmpty)
-                  Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.free_breakfast_outlined, color: muted, size: 32),
-                        const SizedBox(height: 8),
-                        Text('No classes this week', style: theme.textTheme.titleSmall?.copyWith(color: muted)),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      );
-    });
-  }
-
   Widget _buildWeekPage(int page) {
     final monday = _weekStart(page);
-    final live = _weeks[monday];
-    final saved = live == null ? _saved[monday] : null;
-    final week = live ?? saved?.week;
-    final error = _weekErrors[monday];
-    final loading = _loadingWeeks.contains(monday);
+    final timetable = ref.watch(timetableViewModelProvider);
+    final viewModel = ref.read(timetableViewModelProvider.notifier);
+    final TimetableWeek(:live, :saved, :error, :loading, schedule: week) = timetable.weekOf(monday);
     final offline = widget.offline;
 
     if (offline == null && live == null && error == null && !loading) {
       // Not requested yet: fetch it once this page is built.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadWeek(monday);
+        if (mounted && widget.offline == null) viewModel.loadWeek(monday);
       });
     }
 
     // MFA from in4SIT's own sign-in, or from the automatic sign-in retry.
     final sessionState = ref.watch(sessionControllerProvider);
-    final challenge = _mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
+    final challenge =
+        timetable.mfaChallenge ?? (sessionState.phase == SessionPhase.signingIn ? sessionState.challenge : null);
     if (challenge != null && loading) {
       return Center(
         child: Padding(
@@ -552,7 +152,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     if (week == null && error != null) {
       final session = isSessionError(error);
       final retry = FilledButton.icon(
-        onPressed: () => _loadWeek(monday, force: true),
+        onPressed: () => viewModel.refresh(monday),
         icon: const Icon(Icons.refresh),
         label: const Text('Try again'),
       );
@@ -586,7 +186,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
           action: !failed
               ? null
               : offline == null
-                  ? TextButton(onPressed: () => _loadWeek(monday, force: true), child: const Text('Retry'))
+                  ? TextButton(onPressed: () => viewModel.refresh(monday), child: const Text('Retry'))
                   : TextButton(onPressed: _signInAgain, child: const Text('Retry')),
         ),
       );
@@ -596,7 +196,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       children: [
         RefreshStrip(active: loading || (offline != null && offline.busy)),
         if (banner != null) banner,
-        Expanded(child: _buildGrid(monday, week)),
+        Expanded(child: WeekGrid(monday: monday, week: week, palette: CoursePalette(timetable.colours))),
       ],
     );
   }
@@ -613,7 +213,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   Widget build(BuildContext context) {
     final monday = _weekStart(_page);
     final thisWeek = _page == _initialPage;
-    final loading = _loadingWeeks.contains(monday);
+    final loading = ref.watch(timetableViewModelProvider).loading.contains(monday);
 
     return AppScaffold(
       appBar: thumbAppBar(
@@ -649,7 +249,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
                   ? (widget.offline!.busy ? null : _signInAgain)
                   : loading
                       ? null
-                      : () => _loadWeek(monday, force: true),
+                      : () => ref.read(timetableViewModelProvider.notifier).refresh(monday),
             ),
           ],
         ),
