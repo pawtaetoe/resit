@@ -8,11 +8,11 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
-import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/features/calendar/ui/academic_calendar_screen.dart';
 import 'package:resit/features/exams/ui/academic_progress_screen.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/features/services/ui/graduation_ring.dart';
+import 'package:resit/features/services/ui/graduation_year_sheet.dart';
 
 /// The Home dashboard: countdowns from SIT's academic calendar, credits and
 /// GPA from the result slips, and days to the last day of school (the last day of finals). Each tile opens where
@@ -21,81 +21,6 @@ class OverviewGrid extends ConsumerWidget {
   const OverviewGrid({super.key});
 
   void _open(BuildContext context, Widget screen) => Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
-
-  /// Pick the graduation year (students rarely know the exact day): the
-  /// countdown then runs to the Friday ending Trimester 3 finals that year.
-  Future<void> _setGraduation(BuildContext context, WidgetRef ref, int? current) async {
-    final now = DateTime.now();
-    // A year whose graduation day has passed can't be picked.
-    final first = graduationDay(now.year, ref.read(academicCalendarProvider).valueOrNull).date.isBefore(now)
-        ? now.year + 1
-        : now.year;
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        final theme = Theme.of(context);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.page),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('When do you finish?', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 4),
-                Text(
-                  'Pick the year of your last trimester. The countdown runs to the last day of finals in '
-                  'Trimester 3 that year (July or August), from SIT\'s academic calendar.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
-                const SizedBox(height: Space.page),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (var y = first; y <= first + 5; y++)
-                      ChoiceChip(
-                        label: Text('$y'),
-                        selected: y == current,
-                        onSelected: (_) => Navigator.pop(context, y),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    if (picked == null) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('graduation_year', picked);
-    await prefs.remove('graduation_date');
-    ref.invalidate(graduationYearProvider);
-  }
-
-  /// Change or clear the graduation year.
-  Future<void> _editGraduation(BuildContext context, WidgetRef ref, int year, DateTime date, bool estimated) async {
-    final choice = await showChoiceSheet<String>(
-      context,
-      icon: Icons.workspace_premium_outlined,
-      title: 'Finishing in $year',
-      message: 'Counting down to ${DateFormat('EEEE d MMMM yyyy').format(date)}, your last day of finals '
-          '(the end of Trimester 3 finals)'
-          '${estimated ? ' (estimated: SIT\'s calendar doesn\'t list $year yet)' : ''}.',
-      choices: const [
-        SheetChoice('change', 'Change year', icon: Icons.edit_calendar_outlined, primary: true),
-        SheetChoice('clear', 'Remove the countdown', icon: Icons.delete_outline, danger: true),
-      ],
-    );
-    if (!context.mounted || choice == null) return;
-    if (choice == 'change') return _setGraduation(context, ref, year);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('graduation_year');
-    await prefs.remove('graduation_date');
-    ref.invalidate(graduationYearProvider);
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -221,7 +146,7 @@ class OverviewGrid extends ConsumerWidget {
               date: graduation.date,
               estimated: graduation.estimated,
               start: _programmeStart(record?.admitTerm, graduation.date),
-              onTap: () => _editGraduation(context, ref, graduation.year, graduation.date, graduation.estimated),
+              onTap: () => editGraduationYear(context, ref, graduation.year, graduation.date, graduation.estimated),
             ),
             const SizedBox(height: gap),
           ],
@@ -244,7 +169,7 @@ class OverviewGrid extends ConsumerWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed: () => _setGraduation(context, ref, null),
+                onPressed: () => pickGraduationYear(context, ref, null),
                 icon: const Icon(Icons.workspace_premium_outlined),
                 label: const Text('Set your final year for a countdown to your last day of school'),
               ),
@@ -269,90 +194,4 @@ DateTime _programmeStart(String? admitTerm, DateTime graduation) {
   final year = admitTerm == null ? null : RegExp(r'(20\d{2})').firstMatch(admitTerm)?.group(1);
   if (year != null) return DateTime(int.parse(year), 9, 1);
   return DateTime(graduation.year - 3, 9, 1);
-}
-
-/// Days to the last day of school (the last day of finals) in the middle of a ring that fills as time passes,
-/// from the start of the programme to graduation day.
-class GraduationRing extends StatelessWidget {
-  final DateTime date;
-  final DateTime start;
-  final bool estimated;
-  final VoidCallback onTap;
-
-  const GraduationRing({
-    super.key,
-    required this.date,
-    required this.start,
-    required this.estimated,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final fg = scheme.onPrimaryContainer;
-    final today = DateUtils.dateOnly(DateTime.now());
-    final days = date.difference(today).inDays;
-    final total = date.difference(start).inDays;
-    final done = total <= 0 ? 1.0 : (today.difference(start).inDays / total).clamp(0.0, 1.0);
-    final ringSize = MediaQuery.textScalerOf(context).scale(96).clamp(96.0, 140.0);
-    final caption = days <= 0
-        ? 'Finals are over!'
-        : '${(done * 100).round()}% of the way · last final ${DateFormat('EEE d MMM yyyy').format(date)}'
-            '${estimated ? ' (estimated)' : ''}';
-
-    return Semantics(
-      button: true,
-      label: days <= 0 ? 'Finals are over' : '$days days to the last day of school, $caption',
-      excludeSemantics: true,
-      child: TintedCard(
-        color: scheme.primaryContainer,
-        onTap: onTap,
-        child: Row(
-          children: [
-            SizedBox.square(
-              dimension: ringSize,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  CircularProgressIndicator(
-                    value: done,
-                    strokeWidth: 9,
-                    strokeCap: StrokeCap.round,
-                    color: scheme.primary,
-                    backgroundColor: scheme.primary.withValues(alpha: 0.15),
-                  ),
-                  Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FittedBox(
-                          child: Text(days <= 0 ? '🎓' : '$days',
-                              style: theme.textTheme.headlineSmall?.copyWith(color: fg, fontWeight: FontWeight.bold)),
-                        ),
-                        if (days > 0) Text(days == 1 ? 'day' : 'days', style: theme.textTheme.labelSmall?.copyWith(color: fg)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: Space.inset),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('to last day of school', style: theme.textTheme.titleMedium?.copyWith(color: fg)),
-                  const SizedBox(height: 4),
-                  Text(caption, style: theme.textTheme.bodySmall?.copyWith(color: fg)),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right, color: fg),
-          ],
-        ),
-      ),
-    );
-  }
 }
