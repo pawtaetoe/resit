@@ -7,6 +7,7 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// Runs [task]; if a school system's sign-in has lapsed, signs in to SIT
 /// afresh automatically and tries once more, instead of asking the user to.
@@ -115,7 +116,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
     }
 
     // The action goes in the bottom bar, next to back, within thumb reach.
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar(widget.title),
       body: body,
       bottomNavigationBar: ThumbBar(

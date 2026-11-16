@@ -16,6 +16,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/timetable/data/module_colours.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
 /// [initialDate] (this week by default). Signs in first if needed.
@@ -612,7 +613,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     final thisWeek = _page == _initialPage;
     final loading = _loadingWeeks.contains(monday);
 
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar(
         'Timetable',
         subtitle: [

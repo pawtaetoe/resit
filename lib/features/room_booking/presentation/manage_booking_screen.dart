@@ -11,6 +11,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/quota_card.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// My bookings: upcoming (confirmed) and past bookings, with cancel.
 class ManageBookingScreen extends StatelessWidget {
@@ -163,7 +164,7 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('My bookings'),
       // Switching lists sits next to back, under the thumb; refresh is a
       // pull-down on the list.

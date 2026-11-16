@@ -49,7 +49,7 @@ static void my_application_activate(GApplication* application) {
 
   // Starts at a size that fits a 1366x768 laptop; never smaller than a
   // small phone, where the app's layouts stop fitting.
-  gtk_window_set_default_size(window, 1000, 720);
+  gtk_window_set_default_size(window, 1280, 800);
   gtk_widget_set_size_request(GTK_WIDGET(window), 360, 600);
   gtk_widget_show(GTK_WIDGET(window));
 

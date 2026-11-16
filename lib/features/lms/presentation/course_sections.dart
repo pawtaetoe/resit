@@ -11,6 +11,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/lms/data/lms_activities.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
 import 'package:resit/features/lms/presentation/courses_screen.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// xSiTe's own page for one of a course's tools.
 Uri _toolPage(String path, String orgUnitId) => Uri.parse('${LmsService.base}$path?ou=$orgUnitId');
@@ -81,7 +82,7 @@ class CourseScreen extends ConsumerWidget {
         );
 
     final p = progress.valueOrNull;
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar(course.courseCode, subtitle: course.title),
       bottomNavigationBar: ThumbBar(
         child: FilledButton.tonalIcon(
@@ -311,7 +312,7 @@ class _SectionScaffold<T> extends ConsumerWidget {
         ),
     };
 
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar(title, subtitle: '${course.courseCode} · ${course.title}'),
       bottomNavigationBar: ThumbBar(
         child: Row(

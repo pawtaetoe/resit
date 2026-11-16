@@ -249,7 +249,7 @@ Future<void> _shoot(WidgetTester tester, Widget app, String name,
     {Brightness brightness = Brightness.light,
     List<Override> extra = const [],
     bool desktop = false,
-    Widget? push}) async {
+    String? open}) async {
   tester.view.physicalSize = desktop ? const Size(1920, 1200) : const Size(1080, 2340);
   tester.view.devicePixelRatio = desktop ? 1.5 : 2.75;
   tester.platformDispatcher.platformBrightnessTestValue = brightness;
@@ -259,8 +259,8 @@ Future<void> _shoot(WidgetTester tester, Widget app, String name,
   for (var i = 0; i < 5; i++) {
     await tester.pump(const Duration(milliseconds: 200));
   }
-  if (push != null) {
-    tester.state<NavigatorState>(find.byType(Navigator).first).push(MaterialPageRoute<void>(builder: (_) => push));
+  if (open != null) {
+    await tester.tap(find.text(open).first);
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 200));
     }
@@ -304,9 +304,12 @@ void main() {
       extra: [appLockProvider.overrideWith((ref) => _ShotLock(locked: true))]));
   testWidgets('desktop home', (t) => _shoot(t, const ReSitApp(), 'desktop_home', desktop: true));
   testWidgets('desktop timetable',
-      (t) => _shoot(t, const ReSitApp(), 'desktop_timetable', desktop: true, push: const TimetableScreen()));
+      (t) => _shoot(t, const ReSitApp(), 'desktop_timetable', desktop: true, open: 'Timetable'));
   testWidgets('desktop courses',
-      (t) => _shoot(t, const ReSitApp(), 'desktop_xsite', desktop: true, push: const CoursesScreen()));
+      (t) => _shoot(t, const ReSitApp(), 'desktop_xsite', desktop: true, open: 'Courses'));
+  testWidgets('desktop course', (t) async {
+    await _shoot(t, const ReSitApp(), 'desktop_account', desktop: true, open: 'Account');
+  });
   testWidgets('courses', (t) => _shoot(t, _screen(const CoursesScreen()), 'xsite_courses'));
   testWidgets('course', (t) => _shoot(t, _screen(CourseScreen(course: _courses.first)), 'xsite_course'));
   testWidgets('progress', (t) => _shoot(t, _screen(const AcademicProgressScreen()), 'academic_progress'));

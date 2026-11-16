@@ -12,6 +12,7 @@ import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// Exam results from in4SIT: opens on the latest term's result slip; the
 /// term picker in the bottom bar switches terms.
@@ -138,7 +139,7 @@ class _ExamResultsScreenState extends ConsumerState<_ExamResults> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('Exam results', subtitle: 'Result slip for each term, from in4SIT'),
       bottomNavigationBar: ThumbBar(
         child: Row(

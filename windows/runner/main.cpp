@@ -27,7 +27,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   // Fits a 1366x768 laptop with room for the taskbar.
-  Win32Window::Size size(1000, 720);
+  Win32Window::Size size(1280, 800);
   if (!window.Create(L"reSIT", origin, size)) {
     return EXIT_FAILURE;
   }

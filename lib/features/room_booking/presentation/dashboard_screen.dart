@@ -16,6 +16,7 @@ import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/room_booking/data/quota.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/room_booking/presentation/quota_card.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// Book a room: pick a day, a start time and a length, then choose from the
 /// rooms free for the whole slot.
@@ -425,7 +426,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     final maxLeft = _onlyQuotaTypes ? _maxLeft(quota) : null;
     final overQuota = maxLeft != null && _duration > maxLeft;
 
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('Book a room'),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(Space.page, 8, Space.page, 32),

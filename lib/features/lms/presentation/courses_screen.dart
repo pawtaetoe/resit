@@ -16,6 +16,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
 import 'package:resit/features/lms/data/lms_activities.dart';
 import 'package:resit/features/lms/presentation/course_sections.dart';
+import 'package:resit/core/widgets/desktop.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Opens [url] in the browser (xSiTe pages need its full web app).
@@ -91,7 +92,7 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('xSiTe courses', subtitle: 'Progress and what to do next'),
       bottomNavigationBar: ThumbBar(
         child: Row(
@@ -366,7 +367,7 @@ class _CourseContentScreenState extends ConsumerState<CourseContentScreen> {
       );
     }
 
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('Content', subtitle: '${course.courseCode} · ${course.title}'),
       bottomNavigationBar: ThumbBar(
         child: FilledButton.tonalIcon(
