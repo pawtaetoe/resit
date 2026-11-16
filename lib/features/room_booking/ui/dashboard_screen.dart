@@ -12,6 +12,7 @@ import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
+import 'package:resit/features/room_booking/domain/booking_hours.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/domain/quota.dart';
 import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
@@ -27,55 +28,6 @@ class DashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return AuthGate(title: 'Book a room', builder: (_) => const _BookRoomView());
   }
-}
-
-/// Booking hours offered by RBS, in minutes since midnight.
-const _openMin = 7 * 60;
-const _closeMin = 22 * 60;
-const _durations = [30, 60, 90, 120, 180, 240];
-const _daysAhead = 14;
-
-String _hhmm(int minutes) =>
-    '${(minutes ~/ 60).toString().padLeft(2, '0')}:${(minutes % 60).toString().padLeft(2, '0')}';
-
-String _durationLabel(int minutes) {
-  if (minutes < 60) return '$minutes min';
-  final h = minutes / 60;
-  return h == h.roundToDouble() ? '${h.round()} h' : '${h.toStringAsFixed(1)} h';
-}
-
-int _toMin(String time) {
-  final parts = time.trim().split(':');
-  return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-}
-
-/// Returns the slots covering the whole requested range, or an empty list if
-/// any part of it is taken or missing. E.g. 13:00-14:00 needs both
-/// 13:00-13:30 and 13:30-14:00 to be available.
-List<RoomSlot> slotsInRange(List<RoomSlot> slots, int lo, int hi) {
-  if (hi <= lo) return [];
-
-  final inRange = <({RoomSlot slot, int start, int end})>[];
-  for (final sl in slots) {
-    try {
-      final parts = sl.label.split('-');
-      final s = _toMin(parts[0]);
-      final e = _toMin(parts[1]);
-      if (s >= lo && e <= hi) inRange.add((slot: sl, start: s, end: e));
-    } catch (_) {
-      // ignore malformed labels
-    }
-  }
-  inRange.sort((a, b) => a.start.compareTo(b.start));
-
-  // Slots must be available and run back-to-back from lo to hi.
-  var cursor = lo;
-  for (final s in inRange) {
-    if (!s.slot.available || s.start != cursor) return [];
-    cursor = s.end;
-  }
-  if (cursor != hi) return [];
-  return inRange.map((s) => s.slot).toList();
 }
 
 class _BookRoomView extends ConsumerStatefulWidget {
@@ -235,33 +187,18 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
     return DateTime(now.year, now.month, now.day);
   }
 
-  bool _isToday(DateTime d) => d == _today();
-
   /// First bookable half hour on [day], or null if none are left.
-  int? _earliestStart(DateTime day) {
-    var earliest = _openMin;
-    if (_isToday(day)) {
-      final now = DateTime.now();
-      final nowMin = now.hour * 60 + now.minute;
-      earliest = ((nowMin + 29) ~/ 30) * 30; // round up to the next half hour
-      if (earliest < _openMin) earliest = _openMin;
-    }
-    return earliest <= _closeMin - 30 ? earliest : null;
-  }
+  int? _earliestStart(DateTime day) => earliestStart(day, DateTime.now());
 
-  List<int> _startOptions() {
-    final first = _earliestStart(_date);
-    if (first == null) return [];
-    return [for (var m = first; m <= _closeMin - 30; m += 30) m];
-  }
+  List<int> _startOptions() => startOptions(_date, DateTime.now());
 
-  List<int> _validDurations() => _durations.where((d) => _startMin + d <= _closeMin).toList();
+  List<int> _validDurations() => validDurations(_startMin);
 
   int get _endMin => _startMin + _duration;
 
   String get _apiDate => DateFormat('d MMM yyyy').format(_date);
 
-  String get _slotSummary => '${DateFormat('EEE d MMM').format(_date)} · ${_hhmm(_startMin)} – ${_hhmm(_endMin)}';
+  String get _slotSummary => '${DateFormat('EEE d MMM').format(_date)} · ${hhmm(_startMin)} – ${hhmm(_endMin)}';
 
   /// Any change to the search makes old results misleading, so clear them.
   void _changeSearch(VoidCallback change) {
@@ -328,7 +265,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       final done = Completer<void>();
       _searchDone = done;
 
-      _searchSub = service.checkEachRoom(rooms, _apiDate, _hhmm(_openMin), _hhmm(_closeMin)).listen(
+      _searchSub = service.checkEachRoom(rooms, _apiDate, hhmm(bookingOpenMin), hhmm(bookingCloseMin)).listen(
         (check) {
           if (!mounted) return;
           _checked++;
@@ -485,7 +422,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
   Widget _buildDayPicker() {
     final today = _today();
     final days = [
-      for (var i = 0; i <= _daysAhead; i++) DateTime(today.year, today.month, today.day + i),
+      for (var i = 0; i <= bookingDaysAhead; i++) DateTime(today.year, today.month, today.day + i),
     ].where((d) => _earliestStart(d) != null).toList();
 
     return SizedBox(
@@ -536,7 +473,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
       icon: const Icon(Icons.access_time),
       label: Row(
         children: [
-          Expanded(child: Text(_hhmm(current), style: Theme.of(context).textTheme.titleMedium)),
+          Expanded(child: Text(hhmm(current), style: Theme.of(context).textTheme.titleMedium)),
           const Icon(Icons.expand_more),
         ],
       ),
@@ -562,7 +499,7 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
                 children: [
                   for (final m in options)
                     ChoiceChip(
-                      label: Text(_hhmm(m)),
+                      label: Text(hhmm(m)),
                       selected: m == current,
                       onSelected: (_) => Navigator.pop(context, m),
                     ),
@@ -707,12 +644,12 @@ class _BookRoomViewState extends ConsumerState<_BookRoomView> {
           visualDensity: VisualDensity.compact,
         ),
         segments: [
-          for (final d in _durations)
+          for (final d in bookingLengths)
             ButtonSegment(
               value: d,
               enabled: !_searching && valid.contains(d),
-              label: Text(_durationLabel(d).replaceAll(' min', 'm').replaceAll(' h', 'h'),
-                  semanticsLabel: _durationLabel(d)),
+              label: Text(durationLabel(d).replaceAll(' min', 'm').replaceAll(' h', 'h'),
+                  semanticsLabel: durationLabel(d)),
             ),
         ],
         selected: {_duration},

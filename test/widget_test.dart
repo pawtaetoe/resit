@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
-import 'package:resit/features/room_booking/ui/dashboard_screen.dart';
+import 'package:resit/features/room_booking/domain/booking_hours.dart';
 import 'package:resit/features/services/ui/services_screen.dart';
 import 'package:resit/app/app.dart';
 import 'package:shared_preferences/shared_preferences.dart';
