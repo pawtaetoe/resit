@@ -19,6 +19,7 @@ import 'package:resit/features/timetable/data/module_colours.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/timetable/ui/class_details_sheet.dart';
 import 'package:resit/features/timetable/ui/week_grid_layout.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
@@ -210,53 +211,6 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   Color _courseColor(String code) =>
       _courseColors[(_colours[moduleKey(code)] ?? code.hashCode.abs()) % _courseColors.length];
 
-  void _showDetails(ClassSession s) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      // Sized to its content (not capped at half the screen), so larger text
-      // sizes aren't cut off; it scrolls if it's taller than the screen.
-      isScrollControlled: true,
-      // Keeps the details clear of the system navigation bar.
-      builder: (_) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(s.courseCode, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              _detailRow(Icons.class_outlined, '${s.component} · ${s.section}'),
-              _detailRow(Icons.calendar_today_outlined, DateFormat('EEEE, d MMM yyyy').format(s.date)),
-              _detailRow(Icons.schedule, s.timeLabel),
-              if (s.location.isNotEmpty) _detailRow(Icons.place_outlined, s.location),
-              if (s.coinciding) ...[
-                const SizedBox(height: 8),
-                const StatusPill(
-                  label: 'Clashes with another class',
-                  tone: Tone.warning,
-                  icon: Icons.warning_amber_rounded,
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _detailRow(IconData icon, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            const SizedBox(width: 12),
-            Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyLarge)),
-          ],
-        ),
-      );
-
   Widget _buildGrid(DateTime monday, WeekSchedule? week) {
     final today = DateTime.now();
     final sessions = week?.sessions ?? const <ClassSession>[];
@@ -357,10 +311,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
                         label: '${s.courseCode} ${s.component}, ${s.timeLabel}, ${s.location}'
                             '${s.coinciding ? ', clashes with another class' : ''}',
                         excludeSemantics: true,
-                        onTap: () => _showDetails(s),
+                        onTap: () => showClassDetails(context, s),
                         child: GestureDetector(
                           excludeFromSemantics: true,
-                          onTap: () => _showDetails(s),
+                          onTap: () => showClassDetails(context, s),
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
                             decoration: BoxDecoration(
