@@ -10,7 +10,7 @@ import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/room_booking/domain/my_bookings.dart';
 import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/ui/dashboard_screen.dart';
-import 'package:resit/features/room_booking/ui/quota_card.dart';
+import 'package:resit/features/room_booking/ui/widgets/quota_card.dart';
 import 'package:resit/features/room_booking/ui/widgets/booking_card.dart';
 import 'package:resit/core/widgets/desktop.dart';
 

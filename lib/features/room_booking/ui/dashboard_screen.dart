@@ -12,7 +12,7 @@ import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/domain/quota.dart';
 import 'package:resit/features/room_booking/ui/book_room_view_model.dart';
 import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
-import 'package:resit/features/room_booking/ui/quota_card.dart';
+import 'package:resit/features/room_booking/ui/widgets/quota_card.dart';
 import 'package:resit/features/room_booking/ui/widgets/confirm_booking_sheet.dart';
 import 'package:resit/features/room_booking/ui/widgets/day_picker.dart';
 import 'package:resit/features/room_booking/ui/widgets/duration_picker.dart';
