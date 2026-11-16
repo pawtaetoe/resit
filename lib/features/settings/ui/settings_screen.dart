@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
@@ -7,10 +6,13 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
-import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/settings/settings_providers.dart';
 import 'package:resit/features/settings/ui/totp_section.dart';
+import 'package:resit/features/settings/ui/widgets/account_status_banner.dart';
+import 'package:resit/features/settings/ui/widgets/security_options.dart';
+import 'package:resit/features/settings/ui/widgets/sign_in_form.dart';
+import 'package:resit/features/settings/ui/widgets/sign_in_log_panel.dart';
 
 /// Account tab: the first sign-in, the saved login, sign out, and automatic
 /// verification codes. After the first sign-in the app signs itself back in
@@ -157,7 +159,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 // Same header as Home and Services.
                 Text('Account', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: Space.page),
-                _statusBanner(signedIn, session.phase),
+                AccountStatusBanner(
+                  signedIn: signedIn,
+                  phase: session.phase,
+                  savedUsername: _savedUsername,
+                  remember: _remember,
+                  editing: _editing,
+                  busy: _busy,
+                  onChange: () => setState(() => _editing = true),
+                ),
                 const SizedBox(height: Space.section),
                 if (challenge != null) ...[
                   MfaCard(challenge: challenge),
@@ -182,7 +192,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     style: theme.textTheme.bodyMedium?.copyWith(color: muted),
                   ),
                   const SizedBox(height: 16),
-                  _buildForm(),
+                  SignInForm(
+                    formKey: _formKey,
+                    usernameController: _usernameController,
+                    passwordController: _passwordController,
+                    busy: _busy,
+                    editing: _editing,
+                    hasPassword: _hasPassword,
+                    showPassword: _showPassword,
+                    onToggleShowPassword: () => setState(() => _showPassword = !_showPassword),
+                    onSubmit: _signIn,
+                  ),
                   if (_editing)
                     Align(
                       alignment: Alignment.centerRight,
@@ -207,7 +227,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ],
                 const SizedBox(height: Space.section),
-                _securityOptions(),
+                SecurityOptions(
+                  remember: _remember,
+                  busy: _busy,
+                  onRememberChanged: (on) async {
+                    await ref.read(accountServiceProvider).setRemembersPassword(on);
+                    await _loadCredentials();
+                  },
+                ),
                 // Automatic codes only make sense once there's a login to use them with.
                 if (signedIn || _savedUsername != null) ...[
                   const SizedBox(height: Space.section),
@@ -229,203 +256,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ],
                 ),
-                // Every sign-in's steps (including the timetable's), for
-                // troubleshooting.
-                // Shown after a failed sign-in, or behind "Having trouble?".
-                ValueListenableBuilder<List<String>>(
-                  valueListenable: ref.watch(authServiceProvider).signInLog,
-                  builder: (context, log, _) {
-                    if (log.isEmpty) return const SizedBox.shrink();
-                    if (!_showLog && session.phase != SessionPhase.failed) {
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: () => setState(() => _showLog = true),
-                          child: const Text('Having trouble signing in?'),
-                        ),
-                      );
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(top: Space.page),
-                      child: _LogPanel(log: log.join('\n')),
-                    );
-                  },
+                // Every sign-in's steps, for troubleshooting.
+                SignInTroubleshooting(
+                  showLog: _showLog || session.phase == SessionPhase.failed,
+                  onShowLog: () => setState(() => _showLog = true),
                 ),
               ],
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  /// The app lock and whether the password is kept on the device.
-  Widget _securityOptions() {
-    final theme = Theme.of(context);
-    final lock = ref.watch(appLockProvider);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SectionLabel('Security'),
-        Card(
-          margin: EdgeInsets.zero,
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              if (lock.supported)
-                SwitchListTile(
-                  secondary: const Icon(Icons.fingerprint),
-                  title: const Text('App lock'),
-                  subtitle: const Text('Ask for your fingerprint, face or device PIN when reSIT opens, '
-                      'and after 30 seconds away.'),
-                  value: lock.enabled,
-                  onChanged: (on) async {
-                    final ok = await ref.read(appLockProvider.notifier).setEnabled(on);
-                    if (!ok && mounted) showError(context, "Couldn't confirm it's you, so the app lock wasn't changed.");
-                  },
-                ),
-              if (lock.supported) const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.password),
-                title: const Text('Remember my password'),
-                subtitle: Text(_remember
-                    ? 'Kept on this device, encrypted, so the app signs you back in whenever SIT times you out.'
-                    : 'Not kept. After the app is closed you enter it again (SIT may also ask for MFA).'),
-                value: _remember,
-                onChanged: _busy
-                    ? null
-                    : (on) async {
-                        await ref.read(accountServiceProvider).setRemembersPassword(on);
-                        await _loadCredentials();
-                      },
-              ),
-            ],
-          ),
-        ),
-        if (lock.supported && !lock.enabled && _remember)
-          Padding(
-            padding: const EdgeInsets.only(top: Space.dense),
-            child: Text(
-              'Tip: turn on the app lock so someone else holding your phone can\'t open reSIT.',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-          ),
-      ],
-    );
-  }
-
-  /// Whether you're signed in, and as whom. When signed in, "Change" edits
-  /// the saved login.
-  Widget _statusBanner(bool signedIn, SessionPhase phase) {
-    if (signedIn) {
-      return StatusBanner(
-        tone: Tone.success,
-        icon: Icons.verified_user_outlined,
-        title: _savedUsername != null ? 'Signed in as $_savedUsername' : 'Signed in',
-        message: _remember
-            ? 'The app signs you back in automatically when your session expires.'
-            : 'Signed in until you close the app.',
-        action: _editing
-            ? null
-            : TextButton(onPressed: _busy ? null : () => setState(() => _editing = true), child: const Text('Change')),
-      );
-    }
-    final (Tone tone, IconData icon, String title, String message) = switch (phase) {
-      SessionPhase.checking => (Tone.info, Icons.sync, 'Checking your session…', 'This only takes a moment.'),
-      SessionPhase.signingIn => (Tone.info, Icons.sync, 'Signing you in…', 'Using your saved login.'),
-      SessionPhase.failed => (Tone.danger, Icons.error_outline, "Couldn't sign you in", 'See the message below.'),
-      _ => (Tone.info, Icons.person_outline, 'Not signed in', 'Sign in below to use your timetable, results and bookings.'),
-    };
-    return StatusBanner(tone: tone, icon: icon, title: title, message: message);
-  }
-
-  Widget _buildForm() {
-    return AutofillGroup(
-      child: Form(
-        key: _formKey,
-        child: Column(
-          children: [
-            TextFormField(
-              controller: _usernameController,
-              enabled: !_busy,
-              decoration: const InputDecoration(
-                labelText: 'Student ID',
-                hintText: 'e.g. 2100000',
-                prefixIcon: Icon(Icons.badge_outlined),
-              ),
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.next,
-              autofillHints: const [AutofillHints.username],
-              inputFormatters: [FilteringTextInputFormatter.deny(RegExp(r'\s'))],
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your student ID' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _passwordController,
-              enabled: !_busy,
-              obscureText: !_showPassword,
-              enableIMEPersonalizedLearning: false,
-              decoration: InputDecoration(
-                labelText: 'Password',
-                helperText: _editing && _hasPassword ? 'Leave blank to keep your saved password' : null,
-                prefixIcon: const Icon(Icons.lock_outline),
-                suffixIcon: IconButton(
-                  tooltip: _showPassword ? 'Hide password' : 'Show password',
-                  icon: Icon(_showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                  onPressed: () => setState(() => _showPassword = !_showPassword),
-                ),
-              ),
-              textInputAction: TextInputAction.done,
-              autofillHints: const [AutofillHints.password],
-              onFieldSubmitted: (_) => _signIn(),
-              validator: (v) => (v == null || v.isEmpty) && !(_editing && _hasPassword) ? 'Enter your password' : null,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Technical sign-in log, collapsed by default: useful for troubleshooting,
-/// noise for everyone else.
-class _LogPanel extends StatelessWidget {
-  final String log;
-  const _LogPanel({required this.log});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: ExpansionTile(
-        leading: const Icon(Icons.receipt_long_outlined),
-        title: const Text('Sign-in details'),
-        subtitle: const Text('Copy these if you need help with signing in'),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: SelectableText(log,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
-          ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: log));
-                showSuccess(context, 'Details copied.');
-              },
-              icon: const Icon(Icons.copy, size: 18),
-              label: const Text('Copy'),
-            ),
-          ),
-        ],
       ),
     );
   }
