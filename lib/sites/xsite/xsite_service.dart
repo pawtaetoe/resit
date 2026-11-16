@@ -5,7 +5,9 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/xsite/xsite_client.dart';
-import 'package:resit/sites/xsite/xsite_parsers.dart';
+import 'package:resit/sites/xsite/activity_parsers.dart';
+import 'package:resit/sites/xsite/brightspace_json.dart';
+import 'package:resit/sites/xsite/course_parsers.dart';
 
 export 'package:resit/sites/xsite/lms_unavailable_exception.dart' show LmsUnavailableException;
 

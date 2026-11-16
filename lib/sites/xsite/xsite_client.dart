@@ -6,7 +6,7 @@ import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/sites/xsite/lms_unavailable_exception.dart';
 import 'package:resit/sites/xsite/request_limiter.dart';
-import 'package:resit/sites/xsite/xsite_parsers.dart';
+import 'package:resit/sites/xsite/brightspace_json.dart';
 
 /// GETs from xSiTe, signing in to it through SIT's ADFS when it answers with
 /// its login page, and keeping a few requests out at once at most.

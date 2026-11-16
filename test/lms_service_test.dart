@@ -9,7 +9,7 @@ import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/domain/courses.dart';
-import 'package:resit/sites/xsite/xsite_parsers.dart';
+import 'package:resit/sites/xsite/course_parsers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, Object?> _course(String id, String name, String code, {String last = '2026-11-05T09:22:10.060Z'}) => {
