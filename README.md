@@ -16,7 +16,7 @@ Students' three main complaints:
 2. **Slow, inefficient pages.** in4SIT pages in particular take seconds to load and often time out.
 3. **UI not designed for phones.** The sites are desktop-first, so on a phone they mean pinching, zooming and hunting through menus.
 
-reSIT brings the three systems into one app with **one SIT sign-in and one MFA approval**. It is built for phones first, also runs on desktop, and **keeps working when SIT's systems are down**: the timetable and the next class stay available from a saved copy.
+reSIT brings the three systems into one app with **one SIT sign-in and far fewer MFA prompts**. It is built for phones first, also runs on desktop, and **keeps working when SIT's systems are down**: the timetable and the next class stay available from a saved copy.
 
 It talks to the same SIT systems as the student's own browser, using the student's own account. There is no reSIT server in between.
 
@@ -65,7 +65,7 @@ On a desktop window, reSIT is laid out like a desktop app:
 
 | | Separate SIT sites | reSIT |
 | --- | --- | --- |
-| Sign-in and MFA | in4SIT, xSiTe and RBS each ask for a sign-in and a Microsoft Authenticator approval | One SIT sign-in and one MFA approval; each system's session is opened on demand behind it |
+| Sign-in and MFA | in4SIT, xSiTe and RBS each ask for a sign-in and a Microsoft Authenticator approval | One SIT sign-in, far fewer MFA prompts; each system's session is opened on demand behind it |
 | Speed | Full web pages; in4SIT pages are slow and often time out | Requests only the data a screen needs; shows the saved copy at once while it refreshes |
 | SIT system down | Nothing to see | Saved timetable and next class still shown, marked with their age |
 | "What do I have next?" | Timetable, LMS and bookings each in a different system | One Home screen |
