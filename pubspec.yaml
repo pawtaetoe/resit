@@ -2,7 +2,7 @@ name: resit
 description: "reSIT: one app for SIT timetable, xSiTe, results and room booking."
 publish_to: 'none'
 
-version: 1.0.14+17
+version: 1.0.15+18
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
