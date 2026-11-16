@@ -136,7 +136,7 @@ class _ManageBookingsViewState extends ConsumerState<_ManageBookingsView> {
 
     setState(() => _cancelling.add(booking.bookingRef));
     try {
-      await ref.read(bookingServiceProvider).cancelBooking(booking.cancelId);
+      await ref.read(bookingServiceProvider).cancelBooking(booking.bookingRef);
       if (!mounted) return;
       ref.invalidate(quotaDataProvider);
       ref.invalidate(nextBookingProvider);
@@ -300,7 +300,7 @@ class _BookingCard extends StatelessWidget {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurfaceVariant;
     final (tone, icon) = _statusLook(booking.status);
-    final canCancel = booking.status.toLowerCase() == 'confirmed' && booking.cancelId.isNotEmpty;
+    final canCancel = booking.status.toLowerCase() == 'confirmed' && booking.bookingRef.isNotEmpty;
 
     Widget detail(IconData icon, String text) => Padding(
           padding: const EdgeInsets.only(top: 6),

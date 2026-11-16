@@ -406,69 +406,94 @@ class BookingService {
     return byRef.values.toList();
   }
 
-  Future<void> cancelBooking(String cancelId) async {
+  /// The reason sent with a cancellation (RBS asks for one).
+  static const cancelReason = 'No longer needed';
+
+  /// Cancels the booking with reference [bookingRef] (e.g.
+  /// "20261117BKG000020").
+  Future<void> cancelBooking(String bookingRef, {String reason = cancelReason}) async {
     try {
-      await _cancel(cancelId);
+      await _cancel(bookingRef, reason);
     } finally {
       invalidateBookings();
     }
   }
 
-  Future<void> _cancel(String cancelId) async {
+  /// Cancels a booking the way RBS's own "Cancel" button does: RBS first
+  /// encrypts the booking reference (EncryptDecryptFunc), then SaveToCancel
+  /// takes the encrypted ID and answers "1" when it's done.
+  Future<void> _cancel(String bookingRef, String reason) async {
+    final ref = bookingRef.trim();
+    if (ref.isEmpty) throw Exception("This booking has no reference, so it can't be cancelled from the app.");
     final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
+    final id = await _encryptId(ref, csrfToken);
 
-    final data = {
-      "__RequestVerificationToken": csrfToken,
-      "bookingNo": cancelId,
-      "BookingNo": cancelId,
-      "bookingID": cancelId,
-      "BookingID": cancelId,
-      "id": cancelId,
-    };
-
-    final endpoints = [
-      "$base/DHB001/CancelNormalBooking",
-      "$base/DHB001/CancelBooking",
-      "$base/DHB001/BookingCancellation",
-      "$base/SRB001/CancelBooking",
-    ];
-
-    dynamic lastException;
-    for (final url in endpoints) {
-      try {
-        final response = await client.post(
-          Uri.parse(url),
-          headers: {
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "x-requested-with": "XMLHttpRequest",
-            "referer": "$base/DHB001/DHB001Page",
-            "origin": base,
-          },
-          body: data,
-        );
-
-        if (response.statusCode == 404) {
-          continue;
-        }
-
-        if (response.statusCode != 200) {
-          throw Exception("Server returned status ${response.statusCode}");
-        }
-
-        final payload = jsonDecode(response.body);
-        final isSuccess =
-            payload['result'] == 'success' || payload['status'] == 'success' || payload['success'] == true;
-        if (!isSuccess) {
-          throw Exception(payload['message'] ?? payload['error'] ?? response.body);
-        }
-        return;
-      } catch (e) {
-        lastException = e;
-      }
+    final response = await client.post(
+      Uri.parse("$base/DHB001/SaveToCancel"),
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": "$base/DHB001/DHB001Page",
+        "origin": base,
+      },
+      body: {
+        "__RequestVerificationToken": csrfToken,
+        "bookID[]": id,
+        "reason": reason,
+      },
+    );
+    if (response.statusCode != 200) {
+      throw Exception("RBS answered ${response.statusCode} to the cancellation.");
     }
+    if (!cancelSucceeded(response.body)) {
+      throw Exception("RBS didn't confirm the cancellation. Check My bookings.");
+    }
+  }
 
-    throw Exception("Cancellation failed: ${lastException ?? 'All endpoints failed'}");
+  /// RBS's own encryption of a booking reference, as its pages ask for it
+  /// before cancelling. The answer is the encrypted ID as plain text.
+  Future<String> _encryptId(String bookingRef, String csrfToken) async {
+    final response = await client.post(
+      Uri.parse("$base/common/EncryptDecryptFunc"),
+      headers: {
+        "accept": "*/*",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": "$base/DHB001/DHB001Page",
+        "origin": base,
+      },
+      body: {
+        "_isEncrypt": "true",
+        "_encryptData": bookingRef,
+        "_decryptData": "",
+        "__RequestVerificationToken": csrfToken,
+      },
+    );
+    final id = encryptedIdFrom(response.body);
+    if (response.statusCode != 200 || id == null) {
+      throw Exception("RBS didn't prepare the cancellation (status ${response.statusCode}).");
+    }
+    return id;
+  }
+}
+
+/// The encrypted ID in an EncryptDecryptFunc answer (base64 text, maybe
+/// with a trailing newline), or null if the answer is something else, such
+/// as an error page.
+String? encryptedIdFrom(String body) {
+  final text = body.trim();
+  if (text.isEmpty || !RegExp(r'^[A-Za-z0-9+/=_\-]+$').hasMatch(text)) return null;
+  return text;
+}
+
+/// RBS answers a successful cancellation with "1" (as a JSON string).
+bool cancelSucceeded(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    return decoded == 1 || decoded == '1' || decoded == true;
+  } catch (_) {
+    return body.trim() == '1';
   }
 }

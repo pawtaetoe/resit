@@ -14,6 +14,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   late Map<String, int> fetches;
+  late List<Map<String, String>> cancels;
+  late List<Map<String, String>> encrypts;
   late int sessionChecks;
   late List<List<String>> current;
   late BookingService service;
@@ -24,6 +26,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     fetches = {};
+    cancels = [];
+    encrypts = [];
     sessionChecks = 0;
     now = DateTime(2026, 11, 7, 9);
     current = [
@@ -42,9 +46,17 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 5));
         return http.Response(jsonEncode({'data': status == 'current' ? current : []}), 200, request: request);
       }
-      if (path == '/DHB001/CancelNormalBooking') {
+      if (path == '/common/EncryptDecryptFunc') {
+        encrypts.add(request.bodyFields);
+        // RBS answers with the encrypted ID as text, ending in a newline.
+        return http.Response('enc/${request.bodyFields['_encryptData']}+=\n', 200,
+            request: request, headers: {'content-type': 'text/html; charset=utf-8'});
+      }
+      if (path == '/DHB001/SaveToCancel') {
+        cancels.add(request.bodyFields);
         current = [];
-        return http.Response(jsonEncode({'result': 'success'}), 200, request: request);
+        // RBS's own answer: the JSON string "1".
+        return http.Response('"1"', 200, request: request, headers: {'content-type': 'application/json; charset=utf-8'});
       }
       return http.Response('nf', 404, request: request);
     });
@@ -77,6 +89,31 @@ void main() {
     await service.cancelBooking('c1');
     expect(await service.getBookings(), isEmpty);
     expect(fetches['current'], 2);
+  });
+
+  test("cancelling sends what RBS's own Cancel button sends", () async {
+    await service.cancelBooking('20261117BKG000020');
+    // First RBS encrypts the booking reference...
+    expect(encrypts, [
+      {'_isEncrypt': 'true', '_encryptData': '20261117BKG000020', '_decryptData': '', '__RequestVerificationToken': 'tok'},
+    ]);
+    // ...then the encrypted ID is cancelled.
+    expect(cancels, [
+      {'__RequestVerificationToken': 'tok', 'bookID[]': 'enc/20261117BKG000020+=', 'reason': 'No longer needed'},
+    ]);
+  });
+
+  test('an encryption answer that is not an ID stops the cancellation', () {
+    expect(encryptedIdFrom('lrxZzsWkbMGeD84xqY/Jj6Od+5==\n'), 'lrxZzsWkbMGeD84xqY/Jj6Od+5==');
+    expect(encryptedIdFrom('<html>Error</html>'), isNull);
+    expect(encryptedIdFrom('  '), isNull);
+  });
+
+  test('only "1" counts as a confirmed cancellation', () {
+    expect(cancelSucceeded('"1"'), isTrue);
+    expect(cancelSucceeded('1'), isTrue);
+    expect(cancelSucceeded('"0"'), isFalse);
+    expect(cancelSucceeded('<html>error</html>'), isFalse);
   });
 
   test('the weekly quota is worked out once per week for the same bookings', () {
