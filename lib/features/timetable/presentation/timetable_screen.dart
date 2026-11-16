@@ -15,6 +15,7 @@ import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/timetable/data/module_colours.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/features/timetable/data/timetable_store.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
 /// [initialDate] (this week by default). Signs in first if needed.
@@ -23,13 +24,23 @@ class TimetableScreen extends StatelessWidget {
   const TimetableScreen({super.key, this.initialDate});
 
   @override
-  Widget build(BuildContext context) =>
-      AuthGate(title: 'Timetable', builder: (_) => _Timetable(initialDate: initialDate));
+  Widget build(BuildContext context) => AuthGate(
+        title: 'Timetable',
+        builder: (_) => _Timetable(initialDate: initialDate),
+        // While signing in, or when SIT can't be reached, the saved weeks
+        // are shown instead of a wait or an error.
+        offlineBuilder: (_, session) => _Timetable(initialDate: initialDate, offline: session),
+      );
 }
 
 class _Timetable extends ConsumerStatefulWidget {
   final DateTime? initialDate;
-  const _Timetable({this.initialDate});
+
+  /// Set while not signed in (signing in, or sign-in failed): only saved
+  /// weeks are shown and nothing is fetched.
+  final SessionState? offline;
+
+  const _Timetable({this.initialDate, this.offline});
 
   @override
   ConsumerState<_Timetable> createState() => _TimetableScreenState();
@@ -79,6 +90,15 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       _page = _initialPage + (monday.difference(thisMonday).inHours / (24 * 7)).round();
     }
     _pageController = PageController(initialPage: _page);
+    ref.read(timetableWeekStoreProvider).load().then((saved) {
+      if (!mounted) return;
+      setState(() {
+        _saved.addAll(saved..removeWhere((monday, _) => _saved.containsKey(monday)));
+        for (final w in saved.values) {
+          _colourModules(w.week.sessions);
+        }
+      });
+    });
     _colourStore.load().then((saved) {
       if (!mounted) return;
       setState(() {
@@ -94,6 +114,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   // Weeks are fetched one at a time (the server keeps the page state) and
   // cached by their Monday.
   final Map<DateTime, WeekSchedule> _weeks = {};
+
+  /// Weeks saved on the device: shown at once, and when in4SIT can't be
+  /// reached.
+  final Map<DateTime, SavedWeek> _saved = {};
   final Map<DateTime, Object> _weekErrors = {};
   final Set<DateTime> _loadingWeeks = {};
   MfaChallenge? _mfaChallenge;
@@ -108,6 +132,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   /// as the week's error (it's simply asked for again when shown), and it
   /// doesn't chain another look-ahead.
   Future<void> _loadWeek(DateTime monday, {bool force = false, bool prefetch = false}) async {
+    if (widget.offline != null) return;
     if (_loadingWeeks.contains(monday)) return;
     if (!force && (_weeks.containsKey(monday) || _weekErrors.containsKey(monday))) return;
 
@@ -131,8 +156,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       if (!mounted) return;
       setState(() {
         _weeks[monday] = week;
+        _saved[monday] = SavedWeek(week, DateTime.now());
         _colourModules(week.sessions);
       });
+      unawaited(ref.read(timetableWeekStoreProvider).save(week));
       // Swiping on is the likely next step: fetch the following week behind
       // this one (in4SIT takes one request at a time, so it just queues).
       if (!prefetch) {
@@ -480,11 +507,14 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
 
   Widget _buildWeekPage(int page) {
     final monday = _weekStart(page);
-    final week = _weeks[monday];
+    final live = _weeks[monday];
+    final saved = live == null ? _saved[monday] : null;
+    final week = live ?? saved?.week;
     final error = _weekErrors[monday];
     final loading = _loadingWeeks.contains(monday);
+    final offline = widget.offline;
 
-    if (week == null && error == null && !loading) {
+    if (offline == null && live == null && error == null && !loading) {
       // Not requested yet: fetch it once this page is built.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadWeek(monday);
@@ -500,6 +530,19 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
           padding: const EdgeInsets.all(24),
           child: MfaCard(challenge: challenge),
         ),
+      );
+    }
+
+    if (week == null && offline != null) {
+      final failed = offline.phase == SessionPhase.failed;
+      return MessageView(
+        icon: failed ? Icons.cloud_off : Icons.sync,
+        tone: failed ? Tone.danger : Tone.neutral,
+        title: failed ? "Couldn't reach SIT" : 'Signing in to SIT…',
+        message: failed
+            ? 'There is no saved copy of this week yet. Weeks you have opened are kept for when SIT is down.'
+            : 'This week will appear once you are signed in.',
+        action: failed ? _signInAgainButton() : const SizedBox(width: 160, child: LinearProgressIndicator()),
       );
     }
 
@@ -520,13 +563,48 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       );
     }
 
+    // A saved copy on screen because in4SIT couldn't be reached (or isn't
+    // signed in to yet): say so, and how old it is.
+    Widget? banner;
+    if (saved != null && (offline != null || error != null)) {
+      final failed = offline == null || offline.phase == SessionPhase.failed;
+      final why = offline == null
+          ? friendlyError(error!)
+          : failed
+              ? "Couldn't reach SIT."
+              : 'Signing in to SIT…';
+      banner = Padding(
+        padding: const EdgeInsets.fromLTRB(Space.page, Space.dense, Space.page, 0),
+        child: StatusBanner(
+          tone: failed ? Tone.warning : Tone.neutral,
+          icon: failed ? Icons.cloud_off : Icons.sync,
+          title: 'Saved timetable',
+          message: '$why ${updatedAgo(saved.fetchedAt)}.',
+          action: !failed
+              ? null
+              : offline == null
+                  ? TextButton(onPressed: () => _loadWeek(monday, force: true), child: const Text('Retry'))
+                  : TextButton(onPressed: _signInAgain, child: const Text('Retry')),
+        ),
+      );
+    }
+
     return Column(
       children: [
-        RefreshStrip(active: loading),
+        RefreshStrip(active: loading || (offline != null && offline.busy)),
+        if (banner != null) banner,
         Expanded(child: _buildGrid(monday, week)),
       ],
     );
   }
+
+  void _signInAgain() => ref.read(sessionControllerProvider.notifier).ensureSignedIn();
+
+  Widget _signInAgainButton() => FilledButton.icon(
+        onPressed: _signInAgain,
+        icon: const Icon(Icons.refresh),
+        label: const Text('Try again'),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -564,7 +642,11 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
             ThumbIconButton(
               tooltip: 'Refresh',
               icon: Icons.refresh,
-              onPressed: loading ? null : () => _loadWeek(monday, force: true),
+              onPressed: widget.offline != null
+                  ? (widget.offline!.busy ? null : _signInAgain)
+                  : loading
+                      ? null
+                      : () => _loadWeek(monday, force: true),
             ),
           ],
         ),

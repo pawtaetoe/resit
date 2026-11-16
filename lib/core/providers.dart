@@ -15,6 +15,7 @@ import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/lms/data/lms_activities.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
 
 final secureStorageProvider = Provider<SecureStorage>((ref) {
@@ -142,6 +143,9 @@ final nextBookingProvider = FutureProvider.autoDispose<Booking?>((ref) async {
   }
   return next;
 });
+
+/// The timetable weeks saved on the device, for instant and offline viewing.
+final timetableWeekStoreProvider = Provider<TimetableWeekStore>((ref) => TimetableWeekStore());
 
 final upcomingClassesServiceProvider = Provider<UpcomingClassesService>((ref) {
   return UpcomingClassesService(ref.watch(timetableServiceProvider));

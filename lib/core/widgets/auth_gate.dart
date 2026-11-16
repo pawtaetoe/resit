@@ -36,7 +36,12 @@ class AuthGate extends ConsumerStatefulWidget {
   final String title;
   final WidgetBuilder builder;
 
-  const AuthGate({super.key, required this.title, required this.builder});
+  /// What to show instead of the "signing in" and "couldn't sign in" states,
+  /// for screens that have a saved copy to show meanwhile. MFA prompts and
+  /// the "sign in to continue" state still come from the gate.
+  final Widget Function(BuildContext context, SessionState session)? offlineBuilder;
+
+  const AuthGate({super.key, required this.title, required this.builder, this.offlineBuilder});
 
   @override
   ConsumerState<AuthGate> createState() => _AuthGateState();
@@ -58,6 +63,10 @@ class _AuthGateState extends ConsumerState<AuthGate> {
     if (ref.watch(authStateProvider)) return widget.builder(context);
 
     final session = ref.watch(sessionControllerProvider);
+    final offline = widget.offlineBuilder;
+    final waiting = session.phase == SessionPhase.idle || (session.busy && session.challenge == null);
+    if (offline != null && (waiting || session.phase == SessionPhase.failed)) return offline(context, session);
+
     final Widget body;
     Widget? action;
 

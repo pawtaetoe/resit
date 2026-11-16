@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/storage/secure_storage.dart';
@@ -26,6 +27,7 @@ import 'package:resit/features/lms/presentation/course_sections.dart';
 import 'package:resit/features/lms/presentation/courses_screen.dart';
 import 'package:resit/features/room_booking/data/models.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 import 'package:resit/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -188,6 +190,16 @@ class _FakeLms extends LmsService {
   Future<List<LmsCourse>> courses({void Function(MfaChallenge)? onMfaChallenge, bool force = false}) async => _courses;
 }
 
+/// SIT can't be reached (e.g. an outage).
+class _Unreachable extends SessionController {
+  _Unreachable() : super(AuthService(SessionClient(), SecureStorage()), SecureStorage(), watchLifecycle: false) {
+    state = const SessionState(phase: SessionPhase.failed, error: 'SIT took too long to respond.');
+  }
+
+  @override
+  Future<bool> ensureSignedIn({bool force = false}) async => false;
+}
+
 late AcademicCalendar _calendar;
 
 List<Override> _overrides() => [
@@ -210,13 +222,14 @@ List<Override> _overrides() => [
       lmsGroupsProvider.overrideWith((ref, id) async => [MyGroup(category: 'Project Groups', name: 'Team 7', memberCount: 5)]),
     ];
 
-Future<void> _shoot(WidgetTester tester, Widget app, String name, {Brightness brightness = Brightness.light}) async {
+Future<void> _shoot(WidgetTester tester, Widget app, String name,
+    {Brightness brightness = Brightness.light, List<Override> extra = const []}) async {
   tester.view.physicalSize = const Size(1080, 2340);
   tester.view.devicePixelRatio = 2.75;
   tester.platformDispatcher.platformBrightnessTestValue = brightness;
   addTearDown(tester.view.reset);
   addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
-  await tester.pumpWidget(ProviderScope(overrides: _overrides(), child: app));
+  await tester.pumpWidget(ProviderScope(overrides: [..._overrides(), ...extra], child: app));
   for (var i = 0; i < 5; i++) {
     await tester.pump(const Duration(milliseconds: 200));
   }
@@ -246,6 +259,13 @@ void main() {
   testWidgets('home', (t) => _shoot(t, const ReSitApp(), 'home'));
   testWidgets('home dark', (t) => _shoot(t, const ReSitApp(), 'home_dark', brightness: Brightness.dark));
   testWidgets('timetable', (t) => _shoot(t, _screen(const TimetableScreen()), 'timetable'));
+  testWidgets('timetable offline', (t) async {
+    await t.runAsync(() => TimetableWeekStore(now: () => _now.subtract(const Duration(hours: 3))).save(WeekSchedule(_monday, _week)));
+    await _shoot(t, _screen(const TimetableScreen()), 'timetable_offline', extra: [
+      authStateProvider.overrideWith((ref) => false),
+      sessionControllerProvider.overrideWith((ref) => _Unreachable()),
+    ]);
+  });
   testWidgets('courses', (t) => _shoot(t, _screen(const CoursesScreen()), 'xsite_courses'));
   testWidgets('course', (t) => _shoot(t, _screen(CourseScreen(course: _courses.first)), 'xsite_course'));
   testWidgets('progress', (t) => _shoot(t, _screen(const AcademicProgressScreen()), 'academic_progress'));

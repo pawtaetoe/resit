@@ -97,6 +97,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ref.invalidate(savedAcademicRecordProvider);
     ref.invalidate(academicRecordProvider);
     await ref.read(upcomingClassesServiceProvider).clear();
+    await ref.read(timetableWeekStoreProvider).clear();
     ref.invalidate(savedUpcomingClassesProvider);
     ref.invalidate(upcomingClassesProvider);
     ref.read(lmsServiceProvider).clearCache();

@@ -2,16 +2,23 @@
 
 **One fast, secure app for everyday SIT student tasks.**
 
-Today a student at the Singapore Institute of Technology moves between several separate systems, each with its own sign-in, layout and loading times:
+Today a student at the Singapore Institute of Technology uses three separate systems, plus the academic calendar page:
 
-| Task | Where it lives today |
+| System | What it's for |
 | --- | --- |
-| Timetable, exam slips, results, academic record | in4SIT (PeopleSoft) |
-| Course content, announcements, assignments, quizzes, grades, groups | xSiTe (Brightspace) |
-| Discussion-room booking | Room Booking System |
-| Term dates, finals, breaks | The academic calendar page |
+| **in4SIT** (PeopleSoft) | Administrative matters: timetable, exam slips, results, academic record |
+| **xSiTe** (Brightspace) | The learning management system: course content, announcements, assignments, quizzes, grades, groups |
+| **RBS** (Room Booking System) | Discussion-room booking |
 
-reSIT brings these into one app with one SIT sign-in. It is built for phones first and also runs on desktop. It talks to the same SIT systems as the student's own browser, using the student's own account. There is no reSIT server in between.
+Students' three main complaints:
+
+1. **Microsoft MFA for every site.** in4SIT, xSiTe and RBS each ask for their own sign-in, with its own Authenticator prompt.
+2. **Slow, inefficient pages.** in4SIT pages in particular take seconds to load and often time out.
+3. **UI not designed for phones.** The sites are desktop-first, so on a phone they mean pinching, zooming and hunting through menus.
+
+reSIT brings the three systems into one app with **one SIT sign-in and one MFA approval**. It is built for phones first, also runs on desktop, and **keeps working when SIT's systems are down**: the timetable and the next class stay available from a saved copy.
+
+It talks to the same SIT systems as the student's own browser, using the student's own account. There is no reSIT server in between.
 
 > reSIT is an independent student project. It is not made, endorsed or supported by SIT.
 
@@ -23,14 +30,17 @@ All screenshots use made-up demo data.
 | --- | --- | --- |
 | <img src="docs/screenshots/home.png" width="250" alt="Home: the class on now, the next class, the next room booking, and a countdown"> | <img src="docs/screenshots/timetable.png" width="250" alt="Weekly timetable coloured by module"> | <img src="docs/screenshots/xsite_courses.png" width="250" alt="xSiTe work due soon and the latest announcements from all courses"> |
 
-| A course | Academic progress (grades hidden) | Dark mode |
+| A course | Academic progress (grades hidden) | Offline: SIT unreachable |
 | --- | --- | --- |
-| <img src="docs/screenshots/xsite_course.png" width="250" alt="One course: due soon, content progress, announcements, assignments, quizzes, grades, groups"> | <img src="docs/screenshots/academic_progress.png" width="250" alt="Academic progress with grades hidden behind a privacy curtain"> | <img src="docs/screenshots/home_dark.png" width="250" alt="Home screen in dark mode"> |
+| <img src="docs/screenshots/xsite_course.png" width="250" alt="One course: due soon, content progress, announcements, assignments, quizzes, grades, groups"> | <img src="docs/screenshots/academic_progress.png" width="250" alt="Academic progress with grades hidden behind a privacy curtain"> | <img src="docs/screenshots/timetable_offline.png" width="250" alt="The timetable shown from the saved copy when SIT can't be reached"> |
+
+<img src="docs/screenshots/home_dark.png" width="250" alt="Home screen in dark mode"> <br>*Dark mode*
 
 ## What it does
 
 - **Home: what's next, at a glance.** It shows the class on now, the next class, and your next room booking. Below them are the teaching week, days to finals, days to the next break, and a countdown to your last final.
 - **Timetable.** A weekly view coloured by module, with a colour key. Clashing classes are marked. The next week is fetched in the background, so paging forward is instant.
+- **Works offline and during outages.** The weeks you have opened are kept on the device, encrypted. They open instantly, and they stay readable when in4SIT is slow, down for maintenance or taken offline, for example to patch a security issue. A banner says it's a saved copy and how old it is. Home's "Up next" works the same way.
 - **xSiTe in one place.** Work due soon and the latest announcements are gathered from every course you take this term. Each course shows its content progress, assignments (and whether you have submitted), quizzes, released grades and your groups. Items you have already read stay listed.
 - **Exams and results.** It shows exam slips, released results, GPA by term and credits earned. **Grades are hidden by default** behind an eye toggle, so the app is safe to open in public.
 - **Room booking.** Check your quota, find and book a discussion room, and see your bookings.
@@ -40,16 +50,18 @@ All screenshots use made-up demo data.
 
 | | Separate SIT sites | reSIT |
 | --- | --- | --- |
-| Sign-in | Each system signs in separately, with repeated MFA prompts | One SIT sign-in. Each system's session is opened on demand. |
-| Speed | Full web pages; PeopleSoft pages are slow and often time out | It requests only the data a screen needs, then shows it at once from an encrypted on-device cache while it refreshes |
+| Sign-in and MFA | in4SIT, xSiTe and RBS each ask for a sign-in and a Microsoft Authenticator approval | One SIT sign-in and one MFA approval; each system's session is opened on demand behind it |
+| Speed | Full web pages; in4SIT pages are slow and often time out | Requests only the data a screen needs; shows the saved copy at once while it refreshes |
+| SIT system down | Nothing to see | Saved timetable and next class still shown, marked with their age |
 | "What do I have next?" | Timetable, LMS and bookings each in a different system | One Home screen |
 | Deadlines | Spread across every course page in xSiTe | One "Due soon" list across all courses |
-| Mobile use | Desktop-first pages, pinch and zoom | Built for phones, with large tap targets and dark mode |
+| Mobile use | Desktop-first pages: pinch, zoom, deep menus | Built for phones: everything within thumb reach, large tap targets, dark mode |
 | Privacy in public | Grades are shown as soon as the page opens | Grades hidden until you tap |
 
 ## Benefits for SIT
 
-- **Higher student satisfaction.** The daily friction students complain about most is slow pages, repeated sign-ins and information spread across systems. reSIT removes most of it.
+- **Higher student satisfaction.** reSIT removes most of the friction students complain about daily: repeated MFA prompts, slow pages, and sites that are hard to use on a phone.
+- **Resilience during outages.** When in4SIT is down, students can still see where their next class is. That means fewer students stranded, and fewer queries to staff, during an incident.
 - **Fewer missed deadlines and fewer support questions.** A single "Due soon" list and clear class and room details answer "where and when?" before students email staff or IT.
 - **Less load on SIT systems.** reSIT caches what rarely changes, removes duplicate requests and limits how many requests run at once (at most 4 to xSiTe). One student opening the app costs the servers less than the same student clicking through each site.
 - **A path to more student services, with official access.** With an official API, reSIT could add things that scraping cannot safely do. One example is **tuition-fee payment and reminders**: showing the amount due and the deadline on Home, sending a notification before it falls due, and paying in a few taps. That would encourage prompt fee payment and reduce the follow-up work for the Finance office.
@@ -120,6 +132,7 @@ Downloads are on the [Releases](../../releases) page.
 - **The answer first.** Home answers "what's now, what's next, what's due" without a tap.
 - **Fast by default.**
   - Saved data shows at once and refreshes in the background.
+  - When SIT can't be reached, saved data stays on screen with its age, instead of an error page.
   - Each screen shows when it was last updated.
   - Pull down to refresh.
 - **Errors in plain English** with a clear next step. Technical details are folded away for when they help.
