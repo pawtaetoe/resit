@@ -6,7 +6,8 @@ import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/course_screen.dart';
 import 'package:resit/features/lms/ui/due_tile.dart';
-import 'package:resit/features/lms/ui/courses_screen.dart';
+import 'package:resit/features/lms/ui/course_content_screen.dart';
+import 'package:resit/features/lms/ui/term_announcements.dart';
 
 ContentTopic _t(int id, String title, {bool unread = true}) => ContentTopic(
     orgUnitId: '213443', id: id, title: title, type: 'File', url: '/content/$title.pdf', unread: unread);

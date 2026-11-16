@@ -12,7 +12,7 @@ import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/features/lms/ui/open_in_browser.dart';
 import 'package:resit/features/lms/ui/due_tile.dart';
-import 'package:resit/features/lms/ui/courses_screen.dart';
+import 'package:resit/features/lms/ui/course_content_screen.dart';
 import 'package:resit/features/lms/ui/sections/announcements_screen.dart';
 import 'package:resit/features/lms/ui/sections/assignments_screen.dart';
 import 'package:resit/features/lms/ui/sections/quizzes_screen.dart';
