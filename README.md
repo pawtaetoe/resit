@@ -200,16 +200,19 @@ CI (`.github/workflows/build.yml`) builds Android, Windows and Linux on every pu
 
 ```
 lib/
-  core/        sign-in (ADFS + MFA), network client, secure storage, theme, shared widgets
-  features/
-    home/          Home screen
-    timetable/     weekly timetable
-    lms/           xSiTe (Brightspace) courses and activities
-    exams/         exam slips, results, academic record
-    room_booking/  discussion-room booking
-    calendar/      academic calendar
-    services/      services grid and overview
-    settings/      account and sign-in options
-test/        unit and widget tests
-tool/        screenshot generator
+  main.dart     starts the app
+  app/          app shell: phone tabs, desktop sidebar, app lock
+  core/         shared: automatic sign-in, network client, encrypted storage, theme, widgets
+  sites/        the code that talks to each SIT system
+    adfs/         SIT sign-in and MFA
+    in4sit/       timetable and exam results
+    xsite/        courses, content, assignments, quizzes, grades, groups
+    rbs/          room booking
+    sit_website/  academic calendar
+  features/     one folder per part of the app, each with
+                domain/ (models), data/ (saved copies) and ui/ (screens)
+test/         unit and widget tests
+tool/         screenshot generator
 ```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layers and rules.

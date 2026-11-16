@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 
 /// Tells the user to approve the sign-in in Microsoft Authenticator, showing
 /// the number to match when ADFS provides one.

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resit/core/providers.dart';
-import 'package:resit/features/lms/data/lms_activities.dart';
-import 'package:resit/features/lms/data/lms_service.dart';
-import 'package:resit/features/lms/presentation/course_sections.dart';
-import 'package:resit/features/lms/presentation/courses_screen.dart';
+import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/domain/activities.dart';
+import 'package:resit/features/lms/domain/courses.dart';
+import 'package:resit/features/lms/ui/course_sections.dart';
+import 'package:resit/features/lms/ui/courses_screen.dart';
 
 ContentTopic _t(int id, String title, {bool unread = true}) => ContentTopic(
     orgUnitId: '213443', id: id, title: title, type: 'File', url: '/content/$title.pdf', unread: unread);

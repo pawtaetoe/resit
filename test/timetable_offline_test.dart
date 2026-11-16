@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/storage/secure_storage.dart';
-import 'package:resit/features/common/data/private_store.dart';
-import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/core/storage/private_store.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
-import 'package:resit/features/timetable/presentation/timetable_screen.dart';
+import 'package:resit/features/timetable/ui/timetable_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 DateTime _mondayOf(DateTime d) => DateTime(d.year, d.month, d.day - (d.weekday - 1));
 

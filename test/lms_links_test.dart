@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resit/features/lms/data/lms_service.dart';
+import 'package:resit/sites/xsite/xsite_service.dart';
 
 void main() {
   test('links from xSiTe resolve on xSiTe', () {

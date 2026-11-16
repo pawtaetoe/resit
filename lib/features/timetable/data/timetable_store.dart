@@ -1,8 +1,7 @@
 import 'dart:convert';
 
-import 'package:resit/features/common/data/private_store.dart';
-import 'package:resit/features/timetable/data/timetable_service.dart';
-import 'package:resit/features/timetable/data/upcoming_classes.dart';
+import 'package:resit/core/storage/private_store.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// A week as last read from in4SIT, and when.
 class SavedWeek {

@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:resit/core/auth/auth_service.dart';
+import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/ui/feedback.dart';
 
