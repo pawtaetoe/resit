@@ -5,6 +5,7 @@ import 'package:http/testing.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
+import 'package:resit/sites/in4sit/timetable_parsers.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
 

@@ -1,69 +1,17 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:local_auth/local_auth.dart';
+import 'package:resit/core/auth/app_lock_state.dart';
+import 'package:resit/core/auth/device_check.dart';
 import 'package:resit/core/storage/secure_storage.dart';
-import 'package:resit/core/ui/app_theme.dart';
 
-/// The device check behind the app lock (fingerprint, face, or the device
-/// PIN, pattern or password). Replaceable in tests.
-abstract class DeviceCheck {
-  Future<bool> isSupported();
-  Future<bool> confirm(String reason);
-}
-
-class LocalAuthCheck implements DeviceCheck {
-  final _auth = LocalAuthentication();
-
-  @override
-  Future<bool> isSupported() async {
-    try {
-      return await _auth.isDeviceSupported();
-    } catch (_) {
-      // No implementation on this platform (Linux).
-      return false;
-    }
-  }
-
-  @override
-  Future<bool> confirm(String reason) async {
-    try {
-      // Not biometric-only: the device PIN or password always works too.
-      return await _auth.authenticate(localizedReason: reason, persistAcrossBackgrounding: true);
-    } catch (e) {
-      debugPrint('App lock: $e');
-      return false;
-    }
-  }
-}
-
-@immutable
-class AppLockState {
-  /// Whether this device can lock the app at all (false on Linux, or with
-  /// no screen lock set up).
-  final bool supported;
-  final bool enabled;
-
-  /// The app is hidden until the user confirms it's them.
-  final bool locked;
-
-  /// The app is covered while it's in the background (the app switcher
-  /// shows the cover, not your timetable or grades).
-  final bool covered;
-
-  const AppLockState({this.supported = false, this.enabled = false, this.locked = false, this.covered = false});
-
-  bool get hidden => locked || covered;
-
-  AppLockState copyWith({bool? supported, bool? enabled, bool? locked, bool? covered}) => AppLockState(
-        supported: supported ?? this.supported,
-        enabled: enabled ?? this.enabled,
-        locked: locked ?? this.locked,
-        covered: covered ?? this.covered,
-      );
-}
+// The lock's state, the device check behind it and the widget that covers
+// the app live next to this file; importing this one brings them in.
+export 'package:resit/core/auth/app_lock_gate.dart' show AppLockGate;
+export 'package:resit/core/auth/app_lock_state.dart' show AppLockState;
+export 'package:resit/core/auth/device_check.dart' show DeviceCheck, LocalAuthCheck;
 
 /// Locks the app behind the device's fingerprint, face or screen lock: at
 /// launch, and after it has been in the background for [grace] or longer.
@@ -149,92 +97,5 @@ class AppLock extends StateNotifier<AppLockState> {
     await _storage.setAppLockEnabled(on);
     if (mounted) state = state.copyWith(enabled: on, locked: false, covered: false);
     return true;
-  }
-}
-
-/// Covers the app while it's locked or in the background.
-class AppLockGate extends StatelessWidget {
-  final AppLockState lock;
-  final Future<bool> Function() onUnlock;
-  final Widget child;
-
-  const AppLockGate({super.key, required this.lock, required this.onUnlock, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Kept alive (sign-in and loading carry on) but not painted, tappable
-        // or read out while hidden.
-        Offstage(offstage: lock.hidden, child: TickerMode(enabled: !lock.hidden, child: child)),
-        if (lock.hidden) _LockScreen(locked: lock.locked, onUnlock: onUnlock),
-      ],
-    );
-  }
-}
-
-class _LockScreen extends StatefulWidget {
-  final bool locked;
-  final Future<bool> Function() onUnlock;
-
-  const _LockScreen({required this.locked, required this.onUnlock});
-
-  @override
-  State<_LockScreen> createState() => _LockScreenState();
-}
-
-class _LockScreenState extends State<_LockScreen> {
-  @override
-  void initState() {
-    super.initState();
-    if (widget.locked) _askSoon();
-  }
-
-  @override
-  void didUpdateWidget(_LockScreen old) {
-    super.didUpdateWidget(old);
-    if (widget.locked && !old.locked) _askSoon();
-  }
-
-  // Asks as soon as the lock screen shows, so unlocking is one touch.
-  void _askSoon() => WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.onUnlock();
-      });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(Space.section),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.lock_outline, size: 48, color: theme.colorScheme.primary),
-                const SizedBox(height: Space.page),
-                Text('reSIT is locked', style: theme.textTheme.headlineSmall),
-                if (widget.locked) ...[
-                  const SizedBox(height: Space.dense),
-                  Text(
-                    'Use your fingerprint, face or device PIN to open it.',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: Space.section),
-                  FilledButton.icon(
-                    onPressed: widget.onUnlock,
-                    icon: const Icon(Icons.fingerprint),
-                    label: const Text('Unlock'),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
