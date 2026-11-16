@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
-import 'package:resit/sites/sit_website/academic_calendar_service.dart';
+import 'package:resit/sites/sit_website/academic_calendar_parsers.dart';
 
 void main() {
   final calendar = AcademicCalendar(

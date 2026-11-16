@@ -39,7 +39,7 @@ import 'package:resit/app/app.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
 import 'package:resit/features/exams/domain/academic_record.dart';
-import 'package:resit/sites/sit_website/academic_calendar_service.dart';
+import 'package:resit/sites/sit_website/academic_calendar_parsers.dart';
 
 final _sdk = Platform.environment['FLUTTER_ROOT'] ?? '/home/user/sdk/flutter';
 
