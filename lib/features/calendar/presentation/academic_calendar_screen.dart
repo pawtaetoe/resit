@@ -7,6 +7,7 @@ import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/calendar/data/academic_calendar.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// SIT's academic calendar: where today sits (week, trimester, what's next),
 /// then every trimester of the chosen academic year, week by week.
@@ -43,7 +44,7 @@ class _AcademicCalendarScreenState extends ConsumerState<AcademicCalendarScreen>
     final years = calendar?.years ?? const <AcademicYear>[];
     final selected = years.where((y) => y.label == _yearLabel).firstOrNull ?? position?.year ?? years.lastOrNull;
 
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('Academic calendar'),
       // Switch academic year under the thumb.
       bottomNavigationBar: ThumbBar(

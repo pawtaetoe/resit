@@ -236,7 +236,20 @@ class _TotpSetupSheetState extends ConsumerState<_TotpSetupSheet> {
     final config = _config;
     if (config == null) return;
     setState(() => _saving = true);
+    // The code secret sits next to the saved password, so the phone itself
+    // must be locked to the owner: turn on the app lock first where the
+    // device has one (it asks for the fingerprint or PIN).
+    final lock = ref.read(appLockProvider);
+    if (lock.supported && !lock.enabled && !await ref.read(appLockProvider.notifier).setEnabled(true)) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showError(context, 'Automatic codes need the app lock. Confirm with your fingerprint or PIN to turn it on.');
+      return;
+    }
     await ref.read(secureStorageProvider).saveTotp(config.toUri());
+    // The secret key shouldn't linger on the clipboard (some keyboards and
+    // cloud clipboards keep or sync it).
+    await Clipboard.setData(const ClipboardData(text: ''));
     ref.invalidate(totpConfigProvider);
     if (!mounted) return;
     Navigator.pop(context);
@@ -288,16 +301,24 @@ class _TotpSetupSheetState extends ConsumerState<_TotpSetupSheet> {
                     step(2, 'Choose "I want to use a different authenticator app", then Next.'),
                     step(
                         3,
-                        'Click "Can\'t scan image?" and copy the secret key. Send it to this phone and paste it '
-                        'below.'),
+                        'Click "Can\'t scan image?" and type the secret key below. Don\'t send it to yourself '
+                        'by email or chat: anyone who has it can make your codes.'),
                     step(4, 'Type the code shown below into the Microsoft page to finish adding it.'),
                     step(5, 'Set "Authenticator app or hardware token – code" as your default sign-in method.'),
+                    if (ref.watch(appLockProvider).supported) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Saving turns on the app lock, so only you can open reSIT and its codes.',
+                        style: muted,
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     TextField(
                       controller: _controller,
                       onChanged: _check,
                       autocorrect: false,
                       enableSuggestions: false,
+                      enableIMEPersonalizedLearning: false,
                       minLines: 1,
                       maxLines: 3,
                       decoration: InputDecoration(

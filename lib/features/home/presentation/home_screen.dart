@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
+import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
@@ -40,6 +42,7 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final signedIn = ref.watch(authStateProvider);
+    if (DesktopScope.of(context)) return _DesktopHome(onRefresh: () => _refresh(ref));
 
     return Scaffold(
       body: SafeArea(
@@ -73,6 +76,61 @@ class HomeScreen extends ConsumerWidget {
               const _UpNextCard(),
               // At a glance: trimester week, countdowns, credits, GPA, graduation.
               const OverviewGrid(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Home in a desktop window: a title bar with Refresh (also Ctrl+R or F5),
+/// what's next on the left and the overview on the right.
+class _DesktopHome extends ConsumerWidget {
+  final Future<void> Function() onRefresh;
+  const _DesktopHome({required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyR, control: true): onRefresh,
+        const SingleActivator(LogicalKeyboardKey.keyR, meta: true): onRefresh,
+        const SingleActivator(LogicalKeyboardKey.f5): onRefresh,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          appBar: AppBar(
+            toolbarHeight: AppScaffold.toolbarHeight,
+            titleSpacing: 24,
+            automaticallyImplyLeading: false,
+            title: Text(ref.watch(authStateProvider) ? 'Home' : 'Welcome to reSIT'),
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 24),
+                child: OutlinedButton.icon(
+                  onPressed: onRefresh,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
+                ),
+              ),
+            ],
+            shape: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant)),
+          ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
+            children: const [
+              _SessionBanner(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _UpNextCard()),
+                  SizedBox(width: 32),
+                  Expanded(child: OverviewGrid()),
+                ],
+              ),
             ],
           ),
         ),
@@ -240,7 +298,7 @@ class _UpNextCardState extends ConsumerState<_UpNextCard> {
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
             child: Text(
-              '${updatedAgo(at, now)} · pull down to refresh',
+              DesktopScope.of(context) ? updatedAgo(at, now) : '${updatedAgo(at, now)} · pull down to refresh',
               style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),

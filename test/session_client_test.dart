@@ -149,6 +149,27 @@ void main() {
       expect(session.cookieNamesFor(Uri.parse('https://sso.example.com/')), ['Parent']);
     });
 
+    test('a cookie for a public suffix (edu.sg) is rejected', () async {
+      final session = SessionClient(MockClient((request) async {
+        return http.Response('', 200, headers: {
+          'set-cookie': 'Wide=1; Domain=edu.sg; Path=/, Sit=1; Domain=singaporetech.edu.sg; Path=/',
+        });
+      }));
+      await session.get(Uri.parse('https://xsite.singaporetech.edu.sg/'));
+      expect(session.cookieNamesFor(Uri.parse('https://other-school.edu.sg/')), isEmpty);
+      expect(session.cookieNamesFor(Uri.parse('https://in4sit.singaporetech.edu.sg/')), ['Sit']);
+    });
+
+    test('a cookie path matches only at a "/" boundary', () async {
+      final session = SessionClient(MockClient((request) async {
+        return http.Response('', 200, headers: {'set-cookie': 'P=1; Path=/psc'});
+      }));
+      await session.get(Uri.parse('https://example.com/psc/start'));
+      expect(session.cookieNamesFor(Uri.parse('https://example.com/psc')), ['P']);
+      expect(session.cookieNamesFor(Uri.parse('https://example.com/psc/x')), ['P']);
+      expect(session.cookieNamesFor(Uri.parse('https://example.com/pscx')), isEmpty);
+    });
+
     test('a jar saved before the Secure flag existed still loads', () async {
       const old = '[{"name":".AspNet.Cookies","value":"abc","domain":"rbs.example.com","path":"/","expires":null},'
           '{"name":"MSISAuth","value":"x","domain":".example.com","path":"/adfs","expires":4102444800000}]';

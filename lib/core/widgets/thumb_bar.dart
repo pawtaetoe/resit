@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// Bottom bar for screens opened from Home, so back and the screen's main
 /// actions sit where a thumb reaches when the phone is held in one hand.
@@ -10,7 +11,10 @@ class ThumbBar extends StatelessWidget {
 
   /// The bar's control height for the user's text size: it grows with larger
   /// system fonts (up to 80 px) so labels aren't clipped.
-  static double heightOf(BuildContext context) => MediaQuery.textScalerOf(context).scale(height).clamp(height, 80.0);
+  static double heightOf(BuildContext context) => DesktopScope.of(context)
+      // Desktop: a compact toolbar for the mouse.
+      ? MediaQuery.textScalerOf(context).scale(40).clamp(40.0, 64.0)
+      : MediaQuery.textScalerOf(context).scale(height).clamp(height, 80.0);
 
   final Widget? child;
 

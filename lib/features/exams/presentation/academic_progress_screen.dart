@@ -13,6 +13,7 @@ import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// Charts of the academic record: GPA by term, credits per term, and the
 /// spread of grades, each with a table view.
@@ -45,7 +46,7 @@ class _AcademicProgressScreenState extends ConsumerState<AcademicProgressScreen>
     final async = ref.watch(academicRecordProvider);
     final record = async.valueOrNull ?? ref.watch(savedAcademicRecordProvider).valueOrNull;
 
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar('Academic progress'),
       bottomNavigationBar: ThumbBar(
         child: Row(

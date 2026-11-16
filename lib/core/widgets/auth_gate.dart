@@ -7,6 +7,7 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
+import 'package:resit/core/widgets/desktop.dart';
 
 /// Runs [task]; if a school system's sign-in has lapsed, signs in to SIT
 /// afresh automatically and tries once more, instead of asking the user to.
@@ -36,7 +37,12 @@ class AuthGate extends ConsumerStatefulWidget {
   final String title;
   final WidgetBuilder builder;
 
-  const AuthGate({super.key, required this.title, required this.builder});
+  /// What to show instead of the "signing in" and "couldn't sign in" states,
+  /// for screens that have a saved copy to show meanwhile. MFA prompts and
+  /// the "sign in to continue" state still come from the gate.
+  final Widget Function(BuildContext context, SessionState session)? offlineBuilder;
+
+  const AuthGate({super.key, required this.title, required this.builder, this.offlineBuilder});
 
   @override
   ConsumerState<AuthGate> createState() => _AuthGateState();
@@ -58,6 +64,10 @@ class _AuthGateState extends ConsumerState<AuthGate> {
     if (ref.watch(authStateProvider)) return widget.builder(context);
 
     final session = ref.watch(sessionControllerProvider);
+    final offline = widget.offlineBuilder;
+    final waiting = session.phase == SessionPhase.idle || (session.busy && session.challenge == null);
+    if (offline != null && (waiting || session.phase == SessionPhase.failed)) return offline(context, session);
+
     final Widget body;
     Widget? action;
 
@@ -106,7 +116,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
     }
 
     // The action goes in the bottom bar, next to back, within thumb reach.
-    return Scaffold(
+    return AppScaffold(
       appBar: thumbAppBar(widget.title),
       body: body,
       bottomNavigationBar: ThumbBar(

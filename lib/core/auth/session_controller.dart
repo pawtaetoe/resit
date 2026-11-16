@@ -69,6 +69,11 @@ class SessionController extends StateNotifier<SessionState> {
   /// back to the foreground.
   static const recheckAfter = Duration(minutes: 2);
 
+  /// Automatic sign-ins with the saved password allowed in an hour, well
+  /// under the number of failures that locks an SIT account.
+  static const maxAutoSignInsPerHour = 6;
+  final List<DateTime> _autoSignIns = [];
+
   /// With [watchLifecycle] (the default), the session keep-alive is paused
   /// while the app is in the background and restarted when it comes back
   /// (needs the Flutter binding, which the app and widget tests have).
@@ -194,6 +199,26 @@ class SessionController extends StateNotifier<SessionState> {
       if (username == null || username.isEmpty || password == null || password.isEmpty) {
         state = SessionState(phase: SessionPhase.signedOut, log: log);
         return false;
+      }
+      if (entered == null) {
+        // Never repeat a password SIT has turned down (that would lock the
+        // account), and keep automatic sign-ins to a handful an hour.
+        if (await _storage.credentialsRejected()) {
+          state = SessionState(
+              phase: SessionPhase.failed, error: const CredentialsRejectedException().toString(), log: log);
+          return false;
+        }
+        final now = DateTime.now();
+        _autoSignIns.removeWhere((t) => now.difference(t) > const Duration(hours: 1));
+        if (_autoSignIns.length >= maxAutoSignInsPerHour) {
+          state = SessionState(
+            phase: SessionPhase.failed,
+            error: 'Automatic sign-in is paused for a while after several tries. Sign in from Account.',
+            log: log,
+          );
+          return false;
+        }
+        _autoSignIns.add(now);
       }
       if (stopped()) return false;
 

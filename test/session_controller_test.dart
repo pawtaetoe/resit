@@ -155,6 +155,48 @@ void main() {
     expect(controller.state.phase, SessionPhase.signedOut);
   });
 
+  test('a saved password SIT turns down is never sent again by itself', () async {
+    build(creds);
+    // Changed in a browser since it was saved.
+    server.password = 'new';
+    expect(await controller.ensureSignedIn(), isFalse);
+    expect(server.logins, 1);
+    expect(controller.state.phase, SessionPhase.failed);
+    expect(controller.state.error, contains('did not accept your password'));
+    expect(await storage.credentialsRejected(), isTrue);
+
+    // Resumes, retries, a fresh launch: the old password is not tried again,
+    // so the SIT account can't be locked by repeats.
+    expect(await controller.ensureSignedIn(force: true), isFalse);
+    controller.dispose();
+    auth.dispose();
+    build({...creds, 'credentials_rejected': '1'});
+    expect(await controller.ensureSignedIn(force: true), isFalse);
+    expect(server.logins, 1);
+
+    // Entering the new password works and turns automatic sign-in back on.
+    expect(await controller.signInWith('2100000', 'new'), isTrue);
+    expect(server.logins, 2);
+    expect(await storage.credentialsRejected(), isFalse);
+  });
+
+  test('SSO never sends a saved password SIT already turned down', () async {
+    build({...creds, 'credentials_rejected': '1'});
+    final reply = await auth
+        .getWithSso(Uri.parse('https://rbs.singaporetech.edu.sg/SRB001/SRB001Page'))
+        .then<Object>((r) => r, onError: (Object e) => e);
+    expect(reply, isA<CredentialsRejectedException>());
+    expect(server.logins, 0);
+  });
+
+  test('a mistyped new password does not block the saved one', () async {
+    build(creds);
+    expect(await controller.signInWith('2100000', 'typo'), isFalse);
+    expect(await storage.credentialsRejected(), isFalse);
+    server.sessionValid = false;
+    expect(await controller.ensureSignedIn(force: true), isTrue);
+  });
+
   test('after signing out on purpose, it stays signed out', () async {
     build(creds);
     await controller.ensureSignedIn();

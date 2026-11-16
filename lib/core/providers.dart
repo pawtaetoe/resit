@@ -1,3 +1,4 @@
+import 'package:resit/core/auth/app_lock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:resit/core/network/peoplesoft.dart';
@@ -15,6 +16,7 @@ import 'package:resit/features/exams/data/exam_service.dart';
 import 'package:resit/features/lms/data/lms_activities.dart';
 import 'package:resit/features/lms/data/lms_service.dart';
 import 'package:resit/features/timetable/data/timetable_service.dart';
+import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
 
 final secureStorageProvider = Provider<SecureStorage>((ref) {
@@ -56,6 +58,11 @@ final timetableServiceProvider = Provider<TimetableService>((ref) {
 final authStateProvider = StateProvider<bool>((ref) => false);
 
 /// Checks the session and signs in again automatically when it has expired.
+/// The app lock (fingerprint, face or device PIN), read once at launch.
+final appLockProvider = StateNotifierProvider<AppLock, AppLockState>((ref) {
+  return AppLock(ref.watch(secureStorageProvider))..init();
+});
+
 final sessionControllerProvider = StateNotifierProvider<SessionController, SessionState>((ref) {
   return SessionController(ref.watch(authServiceProvider), ref.watch(secureStorageProvider));
 });
@@ -142,6 +149,9 @@ final nextBookingProvider = FutureProvider.autoDispose<Booking?>((ref) async {
   }
   return next;
 });
+
+/// The timetable weeks saved on the device, for instant and offline viewing.
+final timetableWeekStoreProvider = Provider<TimetableWeekStore>((ref) => TimetableWeekStore());
 
 final upcomingClassesServiceProvider = Provider<UpcomingClassesService>((ref) {
   return UpcomingClassesService(ref.watch(timetableServiceProvider));
