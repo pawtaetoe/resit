@@ -1,124 +1,29 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-
 import 'package:html/dom.dart' as dom;
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as parser;
-import 'package:resit/sites/adfs/totp.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
+import 'package:resit/sites/adfs/adfs_pages.dart';
+import 'package:resit/sites/adfs/mfa_flow.dart';
+import 'package:resit/sites/adfs/sign_in_errors.dart';
+import 'package:resit/sites/adfs/sign_in_log.dart';
+import 'package:resit/sites/adfs/sit_hosts.dart';
 
-/// What the user has to do on their phone to finish an MFA sign-in.
-class MfaChallenge {
-  /// The number to tap/enter in Microsoft Authenticator (number matching),
-  /// when the ADFS page shows one.
-  final String? number;
-  final String message;
-
-  /// True when the app is answering the challenge itself with a
-  /// verification code, so there's nothing to do on the phone.
-  final bool automatic;
-
-  const MfaChallenge({this.number, required this.message, this.automatic = false});
-}
-
-/// The saved session is gone and getting a new one needs credentials + MFA.
-class SessionExpiredException implements Exception {
-  /// What the sign-in page looked like, to help work out why SSO failed.
-  final String? detail;
-
-  SessionExpiredException([this.detail]);
-
-  @override
-  String toString() => 'Session expired.'
-      '${detail != null ? '\n\n$detail' : ''}';
-}
-
-/// [url] without its query string or fragment, for logs: sign-in URLs carry
-/// tokens and request ids in their query.
-String loggableUrl(Uri url) =>
-    url.hasAuthority ? '${url.scheme}://${url.host}${url.path}' : url.path;
-
-/// One-line summary of an HTML page for debugging: title, forms with their
-/// field names (no values, actions without their query), and, unless
-/// [includeText] is false, the start of the visible text.
-String describeHtmlPage(String body, {bool includeText = true}) {
-  final doc = parser.parse(body);
-  final title = doc.querySelector('title')?.text.trim() ?? '';
-  final forms = doc.querySelectorAll('form').map((f) {
-    final names = f.querySelectorAll('input').map((i) => i.attributes['name']).whereType<String>();
-    final action = Uri.tryParse(f.attributes['action'] ?? '');
-    return '[${action == null ? '?' : loggableUrl(action)} fields=${names.join(",")}]';
-  }).join(' ');
-  if (!includeText) return 'title="$title" forms=$forms';
-  final text = (doc.body?.text ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
-  return 'title="$title" forms=$forms text="${text.substring(0, text.length.clamp(0, 300))}"';
-}
-
-class MfaException implements Exception {
-  final String message;
-  MfaException(this.message);
-
-  @override
-  String toString() => message;
-}
-
-/// The sign-in was stopped on purpose ([AuthService.cancelSignIn]); not an
-/// error to show the user.
-class SignInCancelledException implements Exception {
-  @override
-  String toString() => 'Sign-in cancelled.';
-}
-
-/// SIT turned the password down. The saved password is then not sent again
-/// automatically until the user enters it afresh: repeating a wrong
-/// password would lock the SIT account.
-class CredentialsRejectedException implements Exception {
-  /// What SIT's sign-in page said, if anything.
-  final String? reason;
-  const CredentialsRejectedException([this.reason]);
-
-  @override
-  String toString() => 'SIT did not accept your password${reason == null ? '' : ' ($reason)'}. '
-      'If you changed it, enter the new one in Account.';
-}
-
-/// A sign-in step was about to send credentials or a sign-in token
-/// somewhere other than SIT's own servers over https, and was stopped.
-class UntrustedHostException implements Exception {
-  final String message;
-  UntrustedHostException(this.message);
-
-  @override
-  String toString() => message;
-}
-
-/// Lets [AuthService.cancelSignIn] stop sign-ins that are in progress.
-class _CancelScope {
-  final _signal = Completer<void>();
-
-  bool get isCancelled => _signal.isCompleted;
-
-  void cancel() {
-    if (!_signal.isCompleted) _signal.complete();
-  }
-
-  void check() {
-    if (isCancelled) throw SignInCancelledException();
-  }
-
-  /// [future], or a [SignInCancelledException] as soon as this is cancelled.
-  Future<T> guard<T>(Future<T> future) async {
-    check();
-    final result = await Future.any<T>([
-      future,
-      _signal.future.then<T>((_) => throw SignInCancelledException()),
-    ]);
-    check();
-    return result;
-  }
-}
+// The rest of SIT sign-in lives next to this file; importing this one brings
+// in the types callers need.
+export 'package:resit/sites/adfs/mfa_flow.dart' show MfaChallenge;
+export 'package:resit/sites/adfs/sign_in_errors.dart'
+    show
+        SessionExpiredException,
+        MfaException,
+        SignInCancelledException,
+        CredentialsRejectedException,
+        UntrustedHostException;
+export 'package:resit/sites/adfs/sign_in_log.dart' show loggableUrl, describeHtmlPage, SignInLog;
+export 'package:resit/sites/adfs/sit_hosts.dart' show SitHosts;
 
 class AuthService {
   final SessionClient client;
@@ -129,41 +34,6 @@ class AuthService {
   static const String base = "https://rbs.singaporetech.edu.sg";
   static const String callback = "$base/Account/LoginCallbak";
   static const String protected = "$base/SRB001/SRB001Page";
-
-  /// SIT's ADFS: the only host the saved student ID and password (and MFA
-  /// answers) are ever sent to.
-  static const String adfsHost = 'fs.singaporetech.edu.sg';
-
-  /// ADFS sign-in tokens (the wresult / SAMLResponse relay forms) are only
-  /// handed on to apps under this domain (RBS, in4SIT, xSiTe, ...). The
-  /// token is issued by ADFS for one SIT app and is worthless to the others,
-  /// so the whole SIT domain is allowed rather than a list of hosts that
-  /// would break whenever SIT adds or moves an app; what this stops is a
-  /// token going to a site outside SIT, or over plain http.
-  static const String sitDomain = 'singaporetech.edu.sg';
-
-  /// Whether [url] is SIT's ADFS over https.
-  static bool isAdfs(Uri url) => url.scheme == 'https' && url.host.toLowerCase() == adfsHost;
-
-  /// Whether [url] is an https address on SIT's own domain.
-  static bool isSitHost(Uri url) {
-    final host = url.host.toLowerCase();
-    return url.scheme == 'https' && (host == sitDomain || host.endsWith('.$sitDomain'));
-  }
-
-  static void _requireAdfs(Uri target, String what) {
-    if (!isAdfs(target)) {
-      throw UntrustedHostException('Stopped signing in: the sign-in page wanted your $what sent to '
-          '${target.scheme}://${target.host}, which is not SIT\'s sign-in server ($adfsHost).');
-    }
-  }
-
-  static void _requireSitHost(Uri target) {
-    if (!isSitHost(target)) {
-      throw UntrustedHostException('Stopped signing in: the sign-in page wanted to pass your sign-in on to '
-          '${target.scheme}://${target.host}, which is not an SIT (https://*.$sitDomain) address.');
-    }
-  }
 
   /// How long signing out waits for ADFS to end the single sign-on session.
   static const Duration signOutTimeout = Duration(seconds: 3);
@@ -191,33 +61,20 @@ class AuthService {
   /// rewritten on every check.
   String? _persistedJar;
 
-  _CancelScope _cancel = _CancelScope();
+  CancelScope _cancel = CancelScope();
 
   /// Stops every sign-in in progress (password + MFA, here or for another
   /// app's single sign-on) at its next step: they end with a
   /// [SignInCancelledException]. Sign-ins started afterwards are unaffected.
   void cancelSignIn() {
     _cancel.cancel();
-    _cancel = _CancelScope();
+    _cancel = CancelScope();
   }
 
-  /// Recent sign-in steps from every sign-in (Account, automatic, and other
-  /// apps' single sign-on such as the timetable), shown in Account → Sign-in
-  /// details for troubleshooting. Page structure and field names only, never
-  /// the password.
-  final signInLog = ValueNotifier<List<String>>(const []);
+  /// See [SignInLog].
+  final signInLog = SignInLog();
 
-  void _record(String message) {
-    // Error text can carry full addresses (http's ClientException adds
-    // "uri=..."): keep the host and path, drop query strings, which can hold
-    // tokens or IDs. Users copy this log into bug reports.
-    message = message.replaceAllMapped(RegExp(r'(https?://[^\s?#]+)[?#][^\s,)]*'), (m) => '${m[1]}?…');
-    final t = DateTime.now();
-    final stamp = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:'
-        '${t.second.toString().padLeft(2, '0')}';
-    final next = [...signInLog.value, '$stamp $message'];
-    signInLog.value = next.length > 300 ? next.sublist(next.length - 300) : next;
-  }
+  void _record(String message) => signInLog.record(message);
 
   /// Time source and pause used by the MFA steps; tests replace them to
   /// fast-forward through code periods.
@@ -237,6 +94,8 @@ class AuthService {
   void Function(bool active)? onSessionChanged;
 
   bool get isActive => _active;
+
+  late final MfaFlow _mfa = MfaFlow(client, storage, clock: () => clock(), sleep: (d) => sleep(d));
 
   // ---------------------------------------------------------------------------
   // Interactive login (credentials + MFA)
@@ -287,7 +146,7 @@ class AuthService {
   Future<bool> _login(
     String username,
     String password, {
-    required _CancelScope cancel,
+    required CancelScope cancel,
     required void Function(String message) log,
     void Function(MfaChallenge challenge)? onMfaChallenge,
     required Duration mfaTimeout,
@@ -304,7 +163,7 @@ class AuthService {
     var adfsUrl = response.request?.url;
     if (adfsUrl == null) throw Exception('No redirect to ADFS login page.');
     // Never hand the password to wherever a redirect happened to land.
-    _requireAdfs(adfsUrl, 'student ID and password');
+    SitHosts.requireAdfs(adfsUrl, 'student ID and password');
 
     // 2. POST credentials to ADFS. Kmsi asks ADFS for its persistent
     // "keep me signed in" SSO cookie, which lets us skip MFA on later logins.
@@ -324,13 +183,13 @@ class AuthService {
 
     var page = loginResponse.body;
     var pageUrl = loginResponse.request?.url ?? adfsUrl;
-    var fields = _extractRelayFields(page);
+    var fields = extractRelayFields(page);
 
     // 3. MFA: ADFS answers a correct password with a challenge page instead
     // of the relay form.
-    if (fields == null && _isMfaPage(page)) {
+    if (fields == null && isMfaPage(page)) {
       log('Step 3 (MFA): ADFS requires multi-factor authentication.');
-      page = (await _completeMfa(
+      page = (await _mfa.complete(
         pageUrl,
         page,
         mfaTimeout: mfaTimeout,
@@ -339,12 +198,12 @@ class AuthService {
         cancel: cancel,
       ))
           .page;
-      fields = _extractRelayFields(page);
+      fields = extractRelayFields(page);
     }
 
     if (fields == null) {
-      final error = _extractError(parser.parse(page));
-      if (_asksForPassword(page)) await _rejected(username, password, error);
+      final error = extractError(parser.parse(page));
+      if (asksForPassword(page)) await _rejected(username, password, error);
       throw Exception(error ?? "No wresult found in ADFS reply. Check your Student ID and Password.");
     }
 
@@ -368,235 +227,6 @@ class AuthService {
     }
     _setActive(hasCookie);
     return hasCookie;
-  }
-
-  /// Walks the MFA pages until ADFS hands back the relay form. Returns the
-  /// HTML of that final page and the URL it came from.
-  Future<({String page, Uri url})> _completeMfa(
-    Uri startUrl,
-    String startPage, {
-    required Duration mfaTimeout,
-    required void Function(String) log,
-    void Function(MfaChallenge)? onChallenge,
-    required _CancelScope cancel,
-  }) async {
-    final deadline = clock().add(mfaTimeout);
-    var url = startUrl;
-    var page = startPage;
-    String? announcedNumber;
-    var announcedApproval = false;
-    final totp = await _loadTotp(log);
-    var codesSent = 0;
-    String? codeError;
-    String? lastCode;
-
-    for (var step = 1;; step++) {
-      cancel.check();
-      final doc = parser.parse(page);
-      final code = _findCodeForm(doc);
-      final form = code?.form ?? _pickForm(doc);
-      if (form == null) {
-        throw MfaException('ADFS MFA page has no form to submit.');
-      }
-
-      final action = form.attributes['action'];
-      final target = (action == null || action.isEmpty) ? url : url.resolve(action);
-      // MFA forms carry the user name and the sign-in context: ADFS only.
-      _requireAdfs(target, 'sign-in verification');
-      // With a code secret saved, pick the verification-code method when
-      // the page offers a choice.
-      final fields = _formFields(form, preferCode: totp != null);
-      final number = _extractMfaNumber(doc);
-      final codeInput = code?.name;
-
-      if (step == 1 || codeInput != null) log('MFA page: ${_describeMfaPage(doc, fields)}');
-
-      // Verification-code page: answer it ourselves instead of waiting for
-      // a push approval.
-      if (codeInput != null) {
-        if (totp == null) {
-          throw MfaException('Sign-in is asking for a verification code. Set up automatic codes in '
-              'Account, or change your default sign-in method back to app notifications.');
-        }
-        if (codesSent >= 2) {
-          throw MfaException("The verification code wasn't accepted${codeError != null ? ' ($codeError)' : ''}. "
-              "Check the code secret in Account and that this phone's clock is set automatically.");
-        }
-        // A code about to expire may be stale by the time it arrives, and a
-        // code can't be used twice, so a retry waits for the next one.
-        if (totp.secondsLeft(clock()) < 3 || totp.codeAt(clock()) == lastCode) {
-          await cancel.guard(sleep(Duration(seconds: totp.secondsLeft(clock()) + 1)));
-        }
-        onChallenge?.call(const MfaChallenge(
-          message: 'Entering your verification code automatically…',
-          automatic: true,
-        ));
-        lastCode = totp.codeAt(clock());
-        fields[codeInput] = lastCode;
-        codesSent++;
-        log('MFA: submitting verification code (attempt $codesSent) to ${target.path} '
-            'as "$codeInput", other fields=${fields.keys.where((k) => k != codeInput).join(", ")}');
-
-        final resp = await cancel.guard(client.post(target, body: fields));
-        url = resp.request?.url ?? target;
-        page = resp.body;
-        if (_extractRelayForm(page, url) != null) {
-          log('MFA verification code accepted.');
-          return (page: page, url: url);
-        }
-        final nextDoc = parser.parse(page);
-        if (nextDoc.querySelector('input[type="password"]') != null) {
-          throw MfaException(_extractError(nextDoc) ?? 'ADFS rejected the sign-in and went back to the password page.');
-        }
-        final error = _extractError(nextDoc);
-        // A rejected code usually re-shows the code box with an error; try
-        // once more with a fresh code, otherwise report the error.
-        if (error != null && _findCodeForm(nextDoc) == null) {
-          throw MfaException(error);
-        }
-        if (error != null) {
-          codeError = error;
-          log('MFA: code rejected: $error');
-        }
-        continue;
-      }
-
-      if (number != null) {
-        if (number != announcedNumber) {
-          announcedNumber = number;
-          onChallenge?.call(MfaChallenge(
-            number: number,
-            message: 'Open Microsoft Authenticator and enter the number $number to approve the sign-in.',
-          ));
-        }
-      } else if (totp != null && step <= 2) {
-        // With automatic codes on, a page without a number or code box is
-        // usually a step on the way to the code page: don't ask the user to
-        // approve anything yet.
-        if (step == 1) {
-          onChallenge?.call(const MfaChallenge(message: 'Verifying your sign-in…', automatic: true));
-        }
-      } else if (!announcedApproval) {
-        announcedApproval = true;
-        onChallenge?.call(const MfaChallenge(message: 'Open Microsoft Authenticator and approve the sign-in request.'));
-      }
-
-      final remaining = deadline.difference(clock());
-      if (remaining <= Duration.zero) {
-        throw MfaException('Timed out waiting for Microsoft Authenticator approval.');
-      }
-
-      // Submitting the challenge page either completes the sign-in (once the
-      // user has approved on their phone) or just re-serves the same page, so
-      // keep polling until the deadline.
-      if (step <= 2 || step % 10 == 0) {
-        log('MFA poll $step: POST ${target.path} fields=${fields.keys.join(", ")}');
-      }
-      // ADFS may hold this request open until the phone approves, so it
-      // gets the rest of the MFA deadline rather than the client's default.
-      final resp = await cancel.guard(client
-          .withTimeout(remaining + const Duration(seconds: 5), () => client.post(target, body: fields))
-          .timeout(
-            remaining,
-            onTimeout: () => throw MfaException('Timed out waiting for Microsoft Authenticator approval.'),
-          ));
-
-      url = resp.request?.url ?? target;
-      page = resp.body;
-
-      if (_extractRelayForm(page, url) != null) {
-        log('MFA approved after $step poll(s).');
-        return (page: page, url: url);
-      }
-
-      final nextDoc = parser.parse(page);
-      if (nextDoc.querySelector('input[type="password"]') != null) {
-        throw MfaException(_extractError(nextDoc) ?? 'ADFS rejected the sign-in and went back to the password page.');
-      }
-      // Moved on to a code page: answer it straight away, no polling pause.
-      if (_findCodeForm(nextDoc) != null) continue;
-      final error = _extractError(nextDoc);
-      if (error != null) throw MfaException(error);
-
-      // Still waiting for approval on the phone: poll again shortly.
-      await cancel.guard(sleep(const Duration(seconds: 2)));
-    }
-  }
-
-  Future<TotpConfig?> _loadTotp(void Function(String) log) async {
-    try {
-      final saved = await storage.getTotp();
-      if (saved == null || saved.isEmpty) return null;
-      return TotpConfig.parse(saved);
-    } catch (e) {
-      log('Saved verification code secret is unreadable: $e');
-      return null;
-    }
-  }
-
-  /// The form and box on an MFA page that want a one-time code, searching
-  /// every form (the code box isn't always in the form [_pickForm] chooses).
-  ({dom.Element form, String name})? _findCodeForm(dom.Document doc) {
-    for (final form in doc.querySelectorAll('form')) {
-      final name = _findCodeInput(form);
-      if (name != null) return (form: form, name: name);
-    }
-    return null;
-  }
-
-  /// The name of the box in [form] that wants a one-time code, or null.
-  /// Matched by name/id/autocomplete since ADFS adapters name it differently
-  /// (e.g. VerificationCode, otc, Passcode), then by code-like hints (numeric
-  /// keyboard, 6-8 character limit), and finally, on a form with exactly one
-  /// visible text box and no password box, that box.
-  String? _findCodeInput(dom.Element form) {
-    final pattern = RegExp(r'code|otp|otc|token|verification|passcode|pin', caseSensitive: false);
-    final visible = <dom.Element>[];
-    for (final input in form.querySelectorAll('input')) {
-      final name = input.attributes['name'];
-      if (name == null || name.isEmpty) continue;
-      final type = (input.attributes['type'] ?? 'text').toLowerCase();
-      if (!const {'text', 'tel', 'number', 'password'}.contains(type)) continue;
-      final hints = '${input.attributes['autocomplete'] ?? ''} $name ${input.attributes['id'] ?? ''} '
-          '${input.attributes['placeholder'] ?? ''} ${input.attributes['aria-label'] ?? ''}';
-      if (hints.contains('one-time-code') || pattern.hasMatch(hints)) return name;
-      if (type != 'password') visible.add(input);
-    }
-
-    for (final input in visible) {
-      final numeric = (input.attributes['inputmode'] ?? '').toLowerCase() == 'numeric' ||
-          (input.attributes['type'] ?? '').toLowerCase() == 'tel' ||
-          (input.attributes['type'] ?? '').toLowerCase() == 'number' ||
-          (input.attributes['pattern'] ?? '').contains(r'\d');
-      final maxLength = int.tryParse(input.attributes['maxlength'] ?? '');
-      if (numeric || (maxLength != null && maxLength >= 6 && maxLength <= 8)) return input.attributes['name'];
-    }
-
-    final hasPassword = form.querySelector('input[type="password"]') != null;
-    if (visible.length == 1 && !hasPassword) return visible.single.attributes['name'];
-    return null;
-  }
-
-  /// Debug summary of an MFA page: the names (never the values, which hold
-  /// the user name and sign-in context) of the fields to submit, the visible
-  /// boxes, and the sign-in method choices offered.
-  String _describeMfaPage(dom.Document doc, Map<String, String> fields) {
-    final names = fields.keys.join(',');
-    final inputs = doc
-        .querySelectorAll('input')
-        .where((i) => (i.attributes['type'] ?? 'text').toLowerCase() != 'hidden')
-        .map((i) => '${i.attributes['name'] ?? i.attributes['id'] ?? '?'}(${i.attributes['type'] ?? 'text'}'
-            '${i.attributes['autocomplete'] != null ? ',${i.attributes['autocomplete']}' : ''})')
-        .join(' ');
-    final choices = doc
-        .querySelectorAll('a, button, label')
-        .map((e) => e.text.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((t) =>
-            RegExp(r'another way|other|code|verification|authenticator|text|call', caseSensitive: false).hasMatch(t))
-        .where((t) => t.length < 80)
-        .take(6)
-        .join(' / ');
-    return 'fields: $names | inputs: $inputs | choices: $choices';
   }
 
   // ---------------------------------------------------------------------------
@@ -654,7 +284,7 @@ class AuthService {
       if (response.statusCode >= 400) return false;
 
       if (url != null && url.host == Uri.parse(base).host) {
-        final token = _extractCsrf(response.body);
+        final token = extractCsrf(response.body);
         if (token != null) {
           _cachedCsrfToken = token;
           _lastValidated = DateTime.now();
@@ -666,7 +296,7 @@ class AuthService {
       }
 
       // Landed on ADFS. Without a relay form we would need credentials + MFA.
-      final fields = _extractRelayFields(response.body);
+      final fields = extractRelayFields(response.body);
       if (fields == null) return false;
 
       debugLog('Session check: ADFS SSO still valid, replaying relay form.');
@@ -750,8 +380,8 @@ class AuthService {
       // Single sign-on runs through SIT's sign-in server too: same longer limit.
       client.withTimeout(
           signInStepTimeout,
-          () => _getWithSso(url,
-              thenGet: thenGet, onLog: onLog, onMfaChallenge: onMfaChallenge, mfaTimeout: mfaTimeout));
+          () =>
+              _getWithSso(url, thenGet: thenGet, onLog: onLog, onMfaChallenge: onMfaChallenge, mfaTimeout: mfaTimeout));
 
   Future<http.Response> _getWithSso(
     Uri url, {
@@ -770,7 +400,7 @@ class AuthService {
       // Only SIT's sign-in server hands out sign-in tokens: a token-like form
       // on any other page is not replayed (it could sign the app in to
       // someone else's session).
-      var relay = isAdfs(landed) ? _extractRelayForm(response.body, landed) : null;
+      var relay = SitHosts.isAdfs(landed) ? extractRelayForm(response.body, landed) : null;
 
       if (relay == null && !signedIn && landed.host != url.host) {
         debugLog('SSO: no relay form on ${landed.host}${landed.path} (status ${response.statusCode}). '
@@ -795,7 +425,7 @@ class AuthService {
       if (relay == null) break;
 
       // The relay form carries a sign-in token: SIT apps over https only.
-      _requireSitHost(relay.action);
+      SitHosts.requireSitHost(relay.action);
       debugLog('SSO: replaying ADFS relay form to ${relay.action.host}${relay.action.path}');
       await cancel.guard(client.post(relay.action, body: relay.fields));
       replayed = true;
@@ -816,7 +446,7 @@ class AuthService {
     required void Function(String) log,
     void Function(MfaChallenge)? onMfaChallenge,
     required Duration mfaTimeout,
-    required _CancelScope cancel,
+    required CancelScope cancel,
   }) async {
     final doc = parser.parse(page);
     dom.Element? form;
@@ -827,11 +457,11 @@ class AuthService {
       }
     }
     if (form == null) {
-      if (!_isAdfsMfaPage(doc)) return null;
+      if (!isAdfsMfaPage(doc)) return null;
       log('ADFS asks for multi-factor authentication for this app.');
-      final mfa = await _completeMfa(pageUrl, page,
+      final mfa = await _mfa.complete(pageUrl, page,
           mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge, cancel: cancel);
-      return _extractRelayForm(mfa.page, mfa.url);
+      return extractRelayForm(mfa.page, mfa.url);
     }
 
     final creds = await storage.getCredentials();
@@ -849,9 +479,9 @@ class AuthService {
     final target = (action == null || action.isEmpty) ? pageUrl : pageUrl.resolve(action);
     // Only ever give the saved password to SIT's ADFS, whatever page a
     // redirect landed on.
-    _requireAdfs(target, 'saved student ID and password');
+    SitHosts.requireAdfs(target, 'saved student ID and password');
     log('SSO unavailable, signing in to ADFS with saved credentials...');
-    final fields = _formFields(form)
+    final fields = formFields(form)
       ..addAll({
         "UserName": "$username@sit.singaporetech.edu.sg",
         "Password": password,
@@ -864,25 +494,20 @@ class AuthService {
     var url = resp.request?.url ?? target;
     var body = resp.body;
 
-    var relay = _extractRelayForm(body, url);
-    if (relay == null && _isMfaPage(body)) {
+    var relay = extractRelayForm(body, url);
+    if (relay == null && isMfaPage(body)) {
       log('ADFS requires multi-factor authentication.');
-      final mfa = await _completeMfa(url, body,
-          mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge, cancel: cancel);
-      relay = _extractRelayForm(mfa.page, mfa.url);
+      final mfa =
+          await _mfa.complete(url, body, mfaTimeout: mfaTimeout, log: log, onChallenge: onMfaChallenge, cancel: cancel);
+      relay = extractRelayForm(mfa.page, mfa.url);
     }
     if (relay == null) {
-      final error = _extractError(parser.parse(body));
-      if (_asksForPassword(body)) await _rejected(username, password, error);
+      final error = extractError(parser.parse(body));
+      if (asksForPassword(body)) await _rejected(username, password, error);
       throw Exception(error ?? 'ADFS sign-in failed. Check your credentials in Settings.');
     }
     return relay;
   }
-
-  /// ADFS answered a password with its password form again: the password
-  /// was turned down.
-  static bool _asksForPassword(String page) =>
-      parser.parse(page).querySelector('form input[type="password"]') != null;
 
   /// Records that SIT turned down [password] if it is the saved one, so it
   /// is never sent again automatically, and stops with a clear message.
@@ -892,26 +517,6 @@ class AuthService {
     throw CredentialsRejectedException(error);
   }
 
-  ({Uri action, Map<String, String> fields})? _extractRelayForm(String body, Uri pageUrl) {
-    final doc = parser.parse(body);
-    for (final form in doc.querySelectorAll('form')) {
-      final fields = <String, String>{};
-      for (final input in form.querySelectorAll('input')) {
-        final name = input.attributes['name'];
-        if (name != null && name.isNotEmpty) fields[name] = input.attributes['value'] ?? '';
-      }
-      final keys = fields.keys.map((k) => k.toLowerCase());
-      if (keys.contains('wresult') || keys.contains('samlresponse')) {
-        final action = form.attributes['action'];
-        return (
-          action: (action == null || action.isEmpty) ? pageUrl : pageUrl.resolve(action),
-          fields: fields,
-        );
-      }
-    }
-    return null;
-  }
-
   /// Signs out: asks ADFS to end its single sign-on session (so the
   /// "keep me signed in" cookie can't be used again even if it leaked),
   /// then forgets the cookies here. The ADFS call is best effort and gives
@@ -919,17 +524,15 @@ class AuthService {
   Future<void> logout() async {
     if (client.hasCookies) {
       try {
-        final signOut = Uri.https(adfsHost, '/adfs/ls/', {'wa': 'wsignout1.0'});
-        await client
-            .withTimeout(signOutTimeout, () => client.get(signOut))
-            .timeout(signOutTimeout);
+        final signOut = Uri.https(SitHosts.adfsHost, '/adfs/ls/', {'wa': 'wsignout1.0'});
+        await client.withTimeout(signOutTimeout, () => client.get(signOut)).timeout(signOutTimeout);
       } catch (e) {
         debugLog('ADFS sign-out failed (ignored): $e');
       }
     }
     client.clearCookies();
     // The troubleshooting log can name the account: not kept past sign-out.
-    signInLog.value = const [];
+    signInLog.clear();
     _cachedCsrfToken = null;
     _lastValidated = null;
     await storage.clearSession();
@@ -961,148 +564,6 @@ class AuthService {
     // Session is gone and renewing it would need MFA.
     _cachedCsrfToken = null;
     _setActive(false);
-    return null;
-  }
-
-  // ---------------------------------------------------------------------------
-  // HTML helpers
-  // ---------------------------------------------------------------------------
-
-  String? _extractCsrf(String body) {
-    final doc = parser.parse(body);
-    final input = doc.querySelector('input[name="__RequestVerificationToken"]');
-    final token = input?.attributes['value'];
-    if (token != null && token.isNotEmpty) return token;
-
-    // Some apps expose it as a meta tag instead
-    final meta = doc.querySelector('meta[name="csrf-token"], meta[name="__RequestVerificationToken"]');
-    final metaToken = meta?.attributes['content'];
-    if (metaToken != null && metaToken.isNotEmpty) return metaToken;
-    return null;
-  }
-
-  Map<String, String>? _extractRelayFields(String body) {
-    final document = parser.parse(body);
-    final fields = <String, String>{};
-    for (final input in document.querySelectorAll('input[type="hidden"]')) {
-      final name = input.attributes['name'];
-      final value = input.attributes['value'];
-      if (name != null && value != null && ['wa', 'wresult', 'wctx'].contains(name.toLowerCase())) {
-        fields[name] = value;
-      }
-    }
-    return fields.containsKey('wresult') ? fields : null;
-  }
-
-  /// An ADFS MFA page: no password box, and a form carrying ADFS's
-  /// AuthMethod/Context fields. Stricter than [_isMfaPage], which only runs
-  /// right after a password was submitted.
-  bool _isAdfsMfaPage(dom.Document doc) {
-    if (doc.querySelector('input[type="password"]') != null) return false;
-    return doc.querySelector('form input[name="AuthMethod"], form input[name="Context"]') != null;
-  }
-
-  /// A page that is not the relay form, has no password box (so it is not
-  /// the login form re-rendered after a bad password) but does have a form.
-  bool _isMfaPage(String body) {
-    final doc = parser.parse(body);
-    if (doc.querySelector('input[type="password"]') != null) return false;
-    return _pickForm(doc) != null;
-  }
-
-  dom.Element? _pickForm(dom.Document doc) {
-    final forms = doc.querySelectorAll('form');
-    if (forms.isEmpty) return null;
-    return forms.firstWhere(
-      (f) => f.querySelector('input[name="AuthMethod"], input[name="Context"]') != null,
-      orElse: () => forms.first,
-    );
-  }
-
-  /// Collects what a browser would submit for [form]: hidden/text inputs,
-  /// checked boxes/radios, the Authenticator-ish radio if none is checked, and
-  /// the first named submit button.
-  Map<String, String> _formFields(dom.Element form, {bool preferCode = false}) {
-    final fields = <String, String>{};
-    final radios = <String, List<dom.Element>>{};
-    String? submitName;
-    String? submitValue;
-
-    for (final input in form.querySelectorAll('input, select, textarea')) {
-      final name = input.attributes['name'];
-      if (name == null || name.isEmpty) continue;
-      final type = (input.attributes['type'] ?? 'text').toLowerCase();
-
-      switch (type) {
-        case 'submit':
-        case 'button':
-        case 'image':
-          if (submitName == null) {
-            submitName = name;
-            submitValue = input.attributes['value'] ?? '';
-          }
-        case 'checkbox':
-          if (input.attributes.containsKey('checked')) {
-            fields[name] = input.attributes['value'] ?? 'on';
-          }
-        case 'radio':
-          radios.putIfAbsent(name, () => []).add(input);
-        default:
-          fields[name] = input.attributes['value'] ?? '';
-      }
-    }
-
-    radios.forEach((name, group) {
-      final checked = group.where((r) => r.attributes.containsKey('checked'));
-      final preferred = group.where((r) => RegExp(r'authenticator|notification|approve|push', caseSensitive: false)
-          .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));
-      final codeOption = group.where((r) => RegExp(r'code|otp|otc|verification|token|passcode', caseSensitive: false)
-          .hasMatch('${r.attributes['value']} ${r.parent?.text ?? ''}'));
-      final pick = preferCode && codeOption.isNotEmpty
-          ? codeOption.first
-          : checked.isNotEmpty
-              ? checked.first
-              : preferred.isNotEmpty
-                  ? preferred.first
-                  : group.first;
-      fields[name] = pick.attributes['value'] ?? '';
-    });
-
-    if (submitName != null) fields[submitName] = submitValue ?? '';
-    return fields;
-  }
-
-  String? _extractMfaNumber(dom.Document doc) {
-    // An element that is just the number (id/class mentions number or code)
-    for (final el in doc.querySelectorAll('[id*="umber"], [class*="umber"], [id*="ode"], [class*="ode"]')) {
-      final text = el.text.trim();
-      if (RegExp(r'^\d{2,3}$').hasMatch(text)) return text;
-    }
-    // "... enter the number 57 ..." in the page text
-    final text = doc.body?.text.replaceAll(RegExp(r'\s+'), ' ') ?? '';
-    final match = RegExp(r'number\D{0,40}?(\d{2,3})\b', caseSensitive: false).firstMatch(text);
-    return match?.group(1);
-  }
-
-  /// The error message an ADFS page shows, or null. ADFS fills its error box
-  /// from a script after the page loads (`delayPopulate('errorText', "...")`),
-  /// so that is read first; the "View details" link that sits in a box styled
-  /// as an error is never taken for the message.
-  String? _extractError(dom.Document doc) {
-    final scripted =
-        RegExp(r"""[dD]elayPopulate\(\s*['"]errorText['"]\s*,\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')""");
-    for (final script in doc.querySelectorAll('script')) {
-      for (final m in scripted.allMatches(script.text)) {
-        final text = (m.group(1) ?? m.group(2) ?? '').replaceAll(r'\"', '"').replaceAll(r"\'", "'").trim();
-        if (text.isNotEmpty) return text;
-      }
-    }
-
-    for (final el in doc.querySelectorAll('#errorText, #error, .error, .error-text, [id*="rror"]')) {
-      if (el.id == 'detailsDiv' || el.querySelector('#viewDetailsLink') != null) continue;
-      final text = el.text.trim();
-      if (text.isNotEmpty && text != 'View details') return text;
-    }
     return null;
   }
 }

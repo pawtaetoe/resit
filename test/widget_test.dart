@@ -115,12 +115,12 @@ void main() {
     expect(find.text('4.12'), findsNothing);
   });
 
-  testWidgets('Home counts down to freedom (last day of finals) once a year is set', (tester) async {
+  testWidgets('Home counts down to the last day of school (last day of finals) once a year is set', (tester) async {
     SharedPreferences.setMockInitialValues({'graduation_year': DateTime.now().year + 2});
     await tester.pumpWidget(const ProviderScope(child: ReSitApp()));
     await tester.pumpAndSettle();
 
-    expect(find.text('to freedom'), findsOneWidget);
+    expect(find.text('to last day of school'), findsOneWidget);
     expect(find.textContaining('last final'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsWidgets);
     expect(find.textContaining('Set your final year'), findsNothing);
