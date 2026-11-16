@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:resit/core/widgets/desktop.dart';
+import 'package:resit/core/widgets/desktop/desktop_scope.dart';
 
 /// Bottom bar for screens opened from Home, so back and the screen's main
 /// actions sit where a thumb reaches when the phone is held in one hand.
