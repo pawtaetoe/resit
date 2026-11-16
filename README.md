@@ -84,6 +84,8 @@ On a desktop window, reSIT is laid out like a desktop app:
 
 Only 1 of the browser's 47 requests is the timetable itself (the 13 kB `SSR_SSENRL` page, the same one reSIT asks for). The other 46 are PeopleSoft scripts, stylesheets and images. in4SIT sits behind a web firewall and cache (Imperva), which can answer some of those files itself, so these numbers measure what the student's device sends and downloads, not exactly what reaches SIT's servers. The page that does reach in4SIT's application is the timetable page, and reSIT asks for it once and then not again until it refreshes. The first visit to each week can take reSIT 1–2 extra requests (switching in4SIT to the weekly view, or signing in again after a timeout).
 
+**How this was measured.** With Chrome's built-in developer tools (Network tab), on the author's own SIT account, in November 2026. The web firewall was identified from the public IP address shown in those tools and a public WHOIS lookup of that address. Nothing else was done: no scanning, probing or testing of SIT's systems, and no attempt to get past any security control.
+
 <details>
 <summary>Browser capture (Chrome DevTools, Network tab)</summary>
 
