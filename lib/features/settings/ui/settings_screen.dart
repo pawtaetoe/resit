@@ -3,18 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/core/providers.dart';
-import 'package:resit/features/timetable/timetable_providers.dart';
-import 'package:resit/features/calendar/calendar_providers.dart';
-import 'package:resit/features/exams/exams_providers.dart';
-import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
+import 'package:resit/features/settings/settings_providers.dart';
 import 'package:resit/features/settings/ui/totp_section.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Account tab: the first sign-in, the saved login, sign out, and automatic
 /// verification codes. After the first sign-in the app signs itself back in
@@ -60,16 +56,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _loadCredentials() async {
-    final storage = ref.read(secureStorageProvider);
-    final creds = await storage.getCredentials();
-    final remember = await storage.remembersPassword();
+    final login = await ref.read(accountServiceProvider).savedLogin();
     if (!mounted) return;
     setState(() {
-      _usernameController.text = creds['username'] ?? '';
+      _usernameController.text = login.username ?? '';
       _passwordController.clear();
-      _savedUsername = creds['username'];
-      _hasPassword = (creds['password'] ?? '').isNotEmpty;
-      _remember = remember;
+      _savedUsername = login.username;
+      _hasPassword = login.hasPassword;
+      _remember = login.remembersPassword;
     });
   }
 
@@ -77,15 +71,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (!_formKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
 
-    // Left blank: keep the saved password (e.g. only the ID changed).
-    // Passwords can legitimately start or end with spaces, so no trim.
-    final password = _passwordController.text.isNotEmpty
-        ? _passwordController.text
-        : (await ref.read(secureStorageProvider).getCredentials())['password'] ?? '';
-    final ok = await ref.read(sessionControllerProvider.notifier).signInWith(
-          _usernameController.text.trim(),
-          password,
-        );
+    // A blank password keeps the saved one.
+    final ok = await ref.read(accountServiceProvider).signIn(_usernameController.text, _passwordController.text);
     await _loadCredentials();
     if (!mounted) return;
     if (ok) {
@@ -111,46 +98,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (choice == null || choice == 'stay') return;
     final forget = choice == 'forget';
 
-    await ref.read(sessionControllerProvider.notifier).signOut(forgetDetails: forget);
-    // Grades and the timetable don't stay on the device after any sign-out.
-    await ref.read(academicRecordServiceProvider).clear();
-    ref.invalidate(savedAcademicRecordProvider);
-    ref.invalidate(academicRecordProvider);
-    await ref.read(upcomingClassesServiceProvider).clear();
-    await ref.read(timetableWeekStoreProvider).clear();
-    ref.invalidate(savedUpcomingClassesProvider);
-    ref.invalidate(upcomingClassesProvider);
-    ref.read(lmsServiceProvider).clearCache();
-    ref.invalidate(lmsProgressProvider);
-    ref.invalidate(lmsContentsProvider);
-    for (final p in [
-      lmsAnnouncementsProvider,
-      lmsAssignmentsProvider,
-      lmsQuizzesProvider,
-      lmsGradesProvider,
-      lmsGroupsProvider,
-      lmsCourseDueProvider,
-    ]) {
-      ref.invalidate(p);
-    }
+    await ref.read(accountServiceProvider).signOut(forgetDetails: forget);
     if (forget) {
-      // Settings that say something about the student (their modules,
-      // graduation year, usual booking) go too.
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        for (final key in const [
-          'module_colours',
-          'graduation_year',
-          'graduation_date',
-          'book_duration',
-          'book_start',
-          'book_types',
-        ]) {
-          await prefs.remove(key);
-        }
-      } catch (_) {}
-      ref.invalidate(graduationYearProvider);
-      ref.invalidate(totpConfigProvider);
       _usernameController.clear();
       _passwordController.clear();
     }
@@ -346,7 +295,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onChanged: _busy
                     ? null
                     : (on) async {
-                        await ref.read(secureStorageProvider).setRemembersPassword(on);
+                        await ref.read(accountServiceProvider).setRemembersPassword(on);
                         await _loadCredentials();
                       },
               ),
