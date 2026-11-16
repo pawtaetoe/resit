@@ -40,7 +40,10 @@ All screenshots use made-up demo data.
 
 ### Desktop (Windows, Linux, macOS)
 
-On wide windows, a side rail replaces the bottom tabs and content stays in a readable column.
+On a desktop window, reSIT is laid out like a desktop app:
+- a sidebar lists every part of the app, grouped by SIT system (in4SIT, xSiTe, room booking), and stays visible as you open courses or bookings
+- each screen's actions sit in a toolbar at the top
+- Home is a two-column dashboard with a Refresh button (also Ctrl+R or F5)
 
 <img src="docs/screenshots/desktop_home.png" width="800" alt="Home on a desktop window with a side navigation rail">
 
@@ -105,12 +108,18 @@ Security is the first design concern, because the app handles a student's SIT ac
   - Linux: the desktop keyring (libsecret)
 - **Cached data is encrypted too.** Cached timetable, results and records are encrypted in the same way, and are **erased on sign-out**.
 - **Excluded from backup.** Android cloud backup and device-to-device transfer are turned off for app data, so credentials never leave the phone in a backup.
-- **Logs are redacted.** Passwords, cookies and tokens never appear in logs.
+- **Logs are redacted.** Passwords, cookies, tokens, query strings and page text (which could hold a name or ID) never appear in the troubleshooting log, and it is cleared on sign-out.
+- **Nothing is left behind.** "Sign out and forget my details" also removes the module list, graduation year and booking preferences. On iPhone and Mac, where the system keychain outlives the app, a reinstalled app wipes the previous install's saved login.
+- **The verification-code secret** is never suggested to be sent by email or chat, is cleared from the clipboard once saved, and the keyboard is told not to learn it.
 - **Grades are hidden by default** on every screen that shows them.
 
 ### Sign-in
 
 - It uses SIT's own sign-in (ADFS), with SIT's MFA: Microsoft Authenticator push, or a code.
+- **It never repeats a rejected password.** If SIT turns the saved password down (for example, after it was changed in a browser), the app stops using it until the student enters the new one, so it can't lock the SIT account. Automatic sign-ins are also capped at a few an hour.
+- Sign-in tokens are only accepted from SIT's sign-in server, and links inside xSiTe replies are only followed when they stay on xSiTe.
+- Cookies can't be scoped wider than SIT (a cookie for all of `edu.sg` is refused).
+- Requests identify themselves honestly: the user agent ends in `reSIT/1.0 (unofficial SIT student app)`, so SIT's IT can tell the app's traffic apart in their logs.
 - A sign-in that is taking too long can be cancelled.
 - Signing out also ends the SIT single sign-on session on the server, not just in the app.
 - Every network request has a time limit, so nothing hangs indefinitely.
@@ -118,7 +127,8 @@ Security is the first design concern, because the app handles a student's SIT ac
 ### Build and release
 
 - The source is open for review.
-- CI uses third-party GitHub Actions pinned to exact commit hashes.
+- CI pins every GitHub Action, GitHub's own included, to an exact commit hash.
+- A release is refused unless the Android build is signed with the project's release key, and every release lists SHA-256 checksums of its files.
 - Signing keys are GitHub secrets, exposed only to the step that signs.
 - Every release is built by CI from `main`; nothing is built on a personal machine.
 
@@ -128,7 +138,8 @@ Security is the first design concern, because the app handles a student's SIT ac
 - By default the app keeps the SIT password on the device, so it can sign in again when a session times out. It is encrypted and protected by the app lock, but it is still a stored password. **Official OAuth or token-based access from SIT would remove the need to store it**, and is the change the project would most like to make with SIT's support.
 - The optional on-device authenticator stores the MFA secret on the same phone as the password. It is off by default. Where the device supports it, turning it on also turns on the app lock, so the phone's owner (fingerprint, face or PIN) is still required. Students who want two fully separate factors can keep using Microsoft Authenticator push.
 - Some features have been built from public documentation and not yet tested on every kind of account: xSiTe assignments, quizzes, grades and groups, and cancelling a room booking. With access to SIT's backend APIs these would be both simpler to build and fully verified.
-- There has been no independent security audit yet.
+- The app lock is a check in the app, not a lock on the stored secrets themselves (they are protected by the operating system's encrypted storage). On Windows that storage is readable by other programs running as the same user.
+- There has been no independent security audit yet. An internal review was done; its findings are fixed or listed here.
 
 ## Platforms
 
