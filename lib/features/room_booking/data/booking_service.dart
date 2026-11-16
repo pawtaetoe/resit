@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:html/parser.dart' as parser;
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/auth/auth_service.dart';
 import 'package:resit/features/room_booking/data/models.dart';
@@ -410,22 +409,25 @@ class BookingService {
   /// The reason sent with a cancellation (RBS asks for one).
   static const cancelReason = 'No longer needed';
 
-  Future<void> cancelBooking(String cancelId, {String reason = cancelReason}) async {
+  /// Cancels the booking with reference [bookingRef] (e.g.
+  /// "20261117BKG000020").
+  Future<void> cancelBooking(String bookingRef, {String reason = cancelReason}) async {
     try {
-      await _cancel(cancelId, reason);
+      await _cancel(bookingRef, reason);
     } finally {
       invalidateBookings();
     }
   }
 
-  /// Cancels a booking the way RBS's own "Cancel" button does: one POST to
-  /// SaveToCancel with the booking's encrypted ID, which answers "1" when
-  /// it's done.
-  Future<void> _cancel(String cancelId, String reason) async {
-    final id = bookingIdFrom(cancelId);
-    if (id.isEmpty) throw Exception("This booking can't be cancelled from the app.");
+  /// Cancels a booking the way RBS's own "Cancel" button does: RBS first
+  /// encrypts the booking reference (EncryptDecryptFunc), then SaveToCancel
+  /// takes the encrypted ID and answers "1" when it's done.
+  Future<void> _cancel(String bookingRef, String reason) async {
+    final ref = bookingRef.trim();
+    if (ref.isEmpty) throw Exception("This booking has no reference, so it can't be cancelled from the app.");
     final csrfToken = await _csrfToken();
     if (csrfToken == null) throw Exception("Could not get CSRF token.");
+    final id = await _encryptId(ref, csrfToken);
 
     final response = await client.post(
       Uri.parse("$base/DHB001/SaveToCancel"),
@@ -446,19 +448,44 @@ class BookingService {
       throw Exception("RBS answered ${response.statusCode} to the cancellation.");
     }
     if (!cancelSucceeded(response.body)) {
-      throw Exception("RBS didn't confirm the cancellation (${response.body.trim()}). Check My bookings.");
+      throw Exception("RBS didn't confirm the cancellation. Check My bookings.");
     }
+  }
+
+  /// RBS's own encryption of a booking reference, as its pages ask for it
+  /// before cancelling. The answer is the encrypted ID as plain text.
+  Future<String> _encryptId(String bookingRef, String csrfToken) async {
+    final response = await client.post(
+      Uri.parse("$base/common/EncryptDecryptFunc"),
+      headers: {
+        "accept": "*/*",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": "$base/DHB001/DHB001Page",
+        "origin": base,
+      },
+      body: {
+        "_isEncrypt": "true",
+        "_encryptData": bookingRef,
+        "_decryptData": "",
+        "__RequestVerificationToken": csrfToken,
+      },
+    );
+    final id = encryptedIdFrom(response.body);
+    if (response.statusCode != 200 || id == null) {
+      throw Exception("RBS didn't prepare the cancellation (status ${response.statusCode}).");
+    }
+    return id;
   }
 }
 
-/// The encrypted booking ID RBS expects, from the bookings list's ID
-/// column: either the ID itself, or the checkbox or button that carries it.
-String bookingIdFrom(String raw) {
-  final text = raw.trim();
-  if (!text.contains('<')) return text;
-  final el = parser.parseFragment(text).querySelector('input[value], button[value], [data-id], [data-bookid]');
-  if (el == null) return '';
-  return (el.attributes['value'] ?? el.attributes['data-id'] ?? el.attributes['data-bookid'] ?? '').trim();
+/// The encrypted ID in an EncryptDecryptFunc answer (base64 text, maybe
+/// with a trailing newline), or null if the answer is something else, such
+/// as an error page.
+String? encryptedIdFrom(String body) {
+  final text = body.trim();
+  if (text.isEmpty || !RegExp(r'^[A-Za-z0-9+/=_\-]+$').hasMatch(text)) return null;
+  return text;
 }
 
 /// RBS answers a successful cancellation with "1" (as a JSON string).

@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   late Map<String, int> fetches;
   late List<Map<String, String>> cancels;
+  late List<Map<String, String>> encrypts;
   late int sessionChecks;
   late List<List<String>> current;
   late BookingService service;
@@ -26,6 +27,7 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     fetches = {};
     cancels = [];
+    encrypts = [];
     sessionChecks = 0;
     now = DateTime(2026, 11, 7, 9);
     current = [
@@ -43,6 +45,12 @@ void main() {
         fetches[status] = (fetches[status] ?? 0) + 1;
         await Future<void>.delayed(const Duration(milliseconds: 5));
         return http.Response(jsonEncode({'data': status == 'current' ? current : []}), 200, request: request);
+      }
+      if (path == '/common/EncryptDecryptFunc') {
+        encrypts.add(request.bodyFields);
+        // RBS answers with the encrypted ID as text, ending in a newline.
+        return http.Response('enc/${request.bodyFields['_encryptData']}+=\n', 200,
+            request: request, headers: {'content-type': 'text/html; charset=utf-8'});
       }
       if (path == '/DHB001/SaveToCancel') {
         cancels.add(request.bodyFields);
@@ -84,17 +92,21 @@ void main() {
   });
 
   test("cancelling sends what RBS's own Cancel button sends", () async {
-    await service.cancelBooking('lrx2zsWkbM6eD8kqY/Jj6Od+5==');
+    await service.cancelBooking('20261117BKG000020');
+    // First RBS encrypts the booking reference...
+    expect(encrypts, [
+      {'_isEncrypt': 'true', '_encryptData': '20261117BKG000020', '_decryptData': '', '__RequestVerificationToken': 'tok'},
+    ]);
+    // ...then the encrypted ID is cancelled.
     expect(cancels, [
-      {'__RequestVerificationToken': 'tok', 'bookID[]': 'lrx2zsWkbM6eD8kqY/Jj6Od+5==', 'reason': 'No longer needed'},
+      {'__RequestVerificationToken': 'tok', 'bookID[]': 'enc/20261117BKG000020+=', 'reason': 'No longer needed'},
     ]);
   });
 
-  test('the booking ID is read from a checkbox or button in the ID column', () {
-    expect(bookingIdFrom(' abc/+= '), 'abc/+=');
-    expect(bookingIdFrom("<input type='checkbox' name='bookID[]' value='enc/1+='>"), 'enc/1+=');
-    expect(bookingIdFrom('<button class="btn" data-id="enc2">Cancel</button>'), 'enc2');
-    expect(bookingIdFrom('<span>no id</span>'), '');
+  test('an encryption answer that is not an ID stops the cancellation', () {
+    expect(encryptedIdFrom('lrxZzsWkbMGeD84xqY/Jj6Od+5==\n'), 'lrxZzsWkbMGeD84xqY/Jj6Od+5==');
+    expect(encryptedIdFrom('<html>Error</html>'), isNull);
+    expect(encryptedIdFrom('  '), isNull);
   });
 
   test('only "1" counts as a confirmed cancellation', () {
