@@ -35,17 +35,19 @@ class BookingService {
   Future<List<RoomWithSlots>> checkAvailability(List<Room> rooms, String date, String startTime, String endTime) =>
       _search.checkAvailability(rooms, date, startTime, endTime);
 
-  /// Checks every room in its own request, a few at once, reporting each as
-  /// its answer arrives (see [RoomSearch.checkEachRoom]).
+  /// Checks every room, a few rooms per request and a few requests at once,
+  /// reporting rooms as their answers arrive (see [RoomSearch.checkEachRoom]).
   Stream<RoomCheck> checkEachRoom(
     List<Room> rooms,
     String date,
     String startTime,
     String endTime, {
     int parallel = 6,
+    int batchSize = 5,
     Duration timeout = const Duration(seconds: 20),
   }) =>
-      _search.checkEachRoom(rooms, date, startTime, endTime, parallel: parallel, timeout: timeout);
+      _search.checkEachRoom(rooms, date, startTime, endTime,
+          parallel: parallel, batchSize: batchSize, timeout: timeout);
 
   Future<void> initiateAndConfirmBooking(Room room, List<RoomSlot> slots, String date) async {
     try {
