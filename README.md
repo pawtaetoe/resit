@@ -77,12 +77,12 @@ On a desktop window, reSIT is laid out like a desktop app:
 
 | | in4SIT in a browser | reSIT |
 | --- | --- | --- |
-| Requests to in4SIT | **47** | **1** |
+| Requests from the device to in4SIT's site | **47** | **1** |
 | Data transferred | **278 kB** | **13 kB** (about 21× less) |
 | Scripts, styles and images to unpack and run | **2.8 MB** | none |
 | Opening it again later | the page and its resources again | **0 requests** (saved copy) |
 
-Only 1 of the browser's 47 requests is the timetable itself (the 13 kB `SSR_SSENRL` page, the same one reSIT asks for). The other 46 are PeopleSoft scripts, stylesheets and images. The first visit to each week can take reSIT 1–2 extra requests (switching in4SIT to the weekly view, or signing in again after a timeout).
+Only 1 of the browser's 47 requests is the timetable itself (the 13 kB `SSR_SSENRL` page, the same one reSIT asks for). The other 46 are PeopleSoft scripts, stylesheets and images. in4SIT sits behind a web firewall and cache (Imperva), which can answer some of those files itself, so these numbers measure what the student's device sends and downloads, not exactly what reaches SIT's servers. The page that does reach in4SIT's application is the timetable page, and reSIT asks for it once and then not again until it refreshes. The first visit to each week can take reSIT 1–2 extra requests (switching in4SIT to the weekly view, or signing in again after a timeout).
 
 <details>
 <summary>Browser capture (Chrome DevTools, Network tab)</summary>
@@ -96,7 +96,7 @@ Only 1 of the browser's 47 requests is the timetable itself (the 13 kB `SSR_SSEN
 - **Higher student satisfaction.** reSIT removes most of the friction students complain about daily: repeated MFA prompts, slow pages, and sites that are hard to use on a phone.
 - **Resilience during outages.** When in4SIT is down, students can still see where their next class is. That means fewer students stranded, and fewer queries to staff, during an incident.
 - **Fewer missed deadlines and fewer support questions.** A single "Due soon" list and clear class and room details answer "where and when?" before students email staff or IT.
-- **Less load on SIT systems.** Loading the timetable takes reSIT 1 request and 13 kB, against 47 requests and 278 kB in a browser (see [Measured](#measured-loading-the-weekly-timetable)), and nothing at all when opened again. reSIT also caches what rarely changes, removes duplicate requests and limits how many run at once (at most 4 to xSiTe).
+- **Lighter on students' devices and on SIT's sites.** Loading the timetable takes reSIT 1 request and 13 kB, against 47 requests and 278 kB in a browser (see [Measured](#measured-loading-the-weekly-timetable)). The timetable page itself, the part in4SIT has to build, is fetched once and not again when the student reopens it. reSIT also caches what rarely changes, removes duplicate requests and limits how many run at once (at most 4 to xSiTe).
 - **A path to more student services, with official access.** With an official API, reSIT could add things that scraping cannot safely do. One example is **tuition-fee payment and reminders**: showing the amount due and the deadline on Home, sending a notification before it falls due, and paying in a few taps. That would encourage prompt fee payment and reduce the follow-up work for the Finance office.
 - **Built by a student, for students,** in the open, with tests and an automated build for every platform.
 
@@ -137,7 +137,7 @@ Security is the first design concern, because the app handles a student's SIT ac
 - **It never repeats a rejected password.** If SIT turns the saved password down (for example, after it was changed in a browser), the app stops using it until the student enters the new one, so it can't lock the SIT account. Automatic sign-ins are also capped at a few an hour.
 - Sign-in tokens are only accepted from SIT's sign-in server, and links inside xSiTe replies are only followed when they stay on xSiTe.
 - Cookies can't be scoped wider than SIT (a cookie for all of `edu.sg` is refused).
-- Requests identify themselves honestly: the user agent ends in `reSIT/1.0 (unofficial SIT student app)`, so SIT's IT can tell the app's traffic apart in their logs.
+- Requests identify themselves honestly: the user agent ends in `reSIT/1.0 (unofficial SIT student app)`, so SIT's IT can tell the app's traffic apart in their logs and in their web firewall, and allowlist or rate-limit it.
 - A sign-in that is taking too long can be cancelled.
 - Signing out also ends the SIT single sign-on session on the server, not just in the app.
 - Every network request has a time limit, so nothing hangs indefinitely.
