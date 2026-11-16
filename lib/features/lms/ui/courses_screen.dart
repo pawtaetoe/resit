@@ -18,14 +18,8 @@ import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/course_sections.dart';
+import 'package:resit/features/lms/ui/open_in_browser.dart';
 import 'package:resit/core/widgets/desktop.dart';
-import 'package:url_launcher/url_launcher.dart';
-
-/// Opens [url] in the browser (xSiTe pages need its full web app).
-Future<void> openInBrowser(BuildContext context, Uri url) async {
-  final ok = await launchUrl(url, mode: LaunchMode.externalApplication).catchError((_) => false);
-  if (!ok && context.mounted) showError(context, "Couldn't open the browser.");
-}
 
 /// "today", "yesterday", "3 days ago", "2 weeks ago", ...
 String _ago(DateTime when, DateTime now) {
