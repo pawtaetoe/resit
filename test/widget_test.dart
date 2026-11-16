@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/services/presentation/services_screen.dart';
 import 'package:resit/main.dart';

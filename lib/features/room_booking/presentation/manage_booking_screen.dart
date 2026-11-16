@@ -8,7 +8,7 @@ import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/features/room_booking/presentation/dashboard_screen.dart';
 import 'package:resit/features/room_booking/presentation/quota_card.dart';
 import 'package:resit/core/widgets/desktop.dart';

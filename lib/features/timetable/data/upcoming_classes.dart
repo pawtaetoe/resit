@@ -2,50 +2,7 @@ import 'dart:convert';
 
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/common/data/private_store.dart';
-
-/// When a class starts and ends, as date-times.
-extension ClassSessionTimes on ClassSession {
-  DateTime get start => date.add(Duration(minutes: startMin));
-  DateTime get end => date.add(Duration(minutes: endMin));
-
-  Map<String, Object?> toJson() => {
-        'date': date.toIso8601String(),
-        'course': courseCode,
-        'section': section,
-        'component': component,
-        'start': startMin,
-        'end': endMin,
-        'location': location,
-        'coinciding': coinciding,
-      };
-}
-
-ClassSession classSessionFromJson(Map<String, Object?> j) => ClassSession(
-      date: DateTime.parse(j['date'] as String),
-      courseCode: j['course'] as String,
-      section: j['section'] as String,
-      component: j['component'] as String,
-      startMin: j['start'] as int,
-      endMin: j['end'] as int,
-      location: j['location'] as String,
-      coinciding: j['coinciding'] as bool? ?? false,
-    );
-
-/// The class on now and the next one to start after now; either can be
-/// null. With overlapping classes, "now" is the one that started first.
-({ClassSession? current, ClassSession? next}) currentAndNextClass(Iterable<ClassSession> sessions, DateTime now) {
-  ClassSession? current;
-  ClassSession? next;
-  for (final s in sessions) {
-    if (!s.end.isAfter(now)) continue;
-    if (!s.start.isAfter(now)) {
-      if (current == null || s.start.isBefore(current.start)) current = s;
-    } else if (next == null || s.start.isBefore(next.start)) {
-      next = s;
-    }
-  }
-  return (current: current, next: next);
-}
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// The classes still to come, read from the in4SIT timetable, with a saved
 /// copy (encrypted on the device) so Home can show the next class straight

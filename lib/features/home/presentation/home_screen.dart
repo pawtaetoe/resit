@@ -9,12 +9,11 @@ import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
-import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/room_booking/domain/quota.dart';
 import 'package:resit/features/room_booking/presentation/manage_booking_screen.dart';
 import 'package:resit/features/services/presentation/overview_grid.dart';
-import 'package:resit/sites/in4sit/timetable_service.dart';
-import 'package:resit/features/timetable/data/upcoming_classes.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// Home: the dashboard. Sign-in status only when there's something to do,
 /// what's up next (class, booking), and the overview of the trimester,

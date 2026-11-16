@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:resit/features/room_booking/data/models.dart';
-import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
+import 'package:resit/features/room_booking/domain/quota.dart';
 
 Booking _b(String room, String date, String time, {String status = 'Confirmed', String ref = ''}) => Booking(
     roomName: room,

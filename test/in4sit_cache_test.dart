@@ -8,11 +8,15 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/sites/in4sit/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
-import 'package:resit/features/exams/data/academic_record.dart';
+import 'package:resit/features/exams/data/academic_record_service.dart';
 import 'package:resit/features/common/data/private_store.dart';
 import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/exams/domain/exam_results.dart';
+import 'package:resit/features/exams/data/exam_slip_store.dart';
+import 'package:resit/features/exams/domain/academic_record.dart';
 
 String _ajax(String html, int state) => "<?xml version='1.0'?><PAGE>"
     "<GENSCRIPT id='onloadScript'><![CDATA[oDoc.win0.ICStateNum.value=$state;]]></GENSCRIPT>"

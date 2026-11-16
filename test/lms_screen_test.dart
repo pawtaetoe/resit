@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/core/providers.dart';
-import 'package:resit/sites/xsite/xsite_activities.dart';
-import 'package:resit/sites/xsite/xsite_service.dart';
+import 'package:resit/features/lms/domain/activities.dart';
+import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/presentation/course_sections.dart';
 import 'package:resit/features/lms/presentation/courses_screen.dart';
 

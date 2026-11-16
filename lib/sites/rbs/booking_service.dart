@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
-import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
+import 'package:resit/sites/rbs/rbs_parsers.dart';
 
 class BookingService {
   final SessionClient client;
@@ -73,7 +74,7 @@ class BookingService {
     }
 
     final List<dynamic> jsonList = jsonDecode(response.body);
-    final allRooms = jsonList.map((e) => Room.fromJson(e)).toList();
+    final allRooms = [for (final e in jsonList) if (e is Map) roomFromJson(e.cast<String, Object?>())];
 
     // Every type of room is returned; the search screen filters by type,
     // with discussion and meeting rooms selected by default.
@@ -386,7 +387,7 @@ class BookingService {
 
     final jsonMap = jsonDecode(response.body);
     final List<dynamic> rawList = jsonMap['data'] ?? [];
-    return rawList.map((e) => Booking.fromList(List<dynamic>.from(e))).toList();
+    return [for (final e in rawList) if (e is List) bookingFromRow(e.cast<Object?>())];
   }
 
   /// Every booking that might count toward the weekly quota: current ones

@@ -10,9 +10,9 @@ import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/sites/in4sit/exam_service.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:resit/core/widgets/desktop.dart';
+import 'package:resit/features/exams/domain/exam_results.dart';
 
 /// Exam results from in4SIT: opens on the latest term's result slip; the
 /// term picker in the bottom bar switches terms.

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
-import 'package:resit/features/room_booking/data/quota.dart';
+import 'package:resit/features/room_booking/domain/quota.dart';
 
 /// Weekly allowance left per room type for the week containing [day], so the
 /// student sees the limit before hitting it.

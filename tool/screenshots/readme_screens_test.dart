@@ -19,19 +19,22 @@ import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/ui/app_theme.dart';
-import 'package:resit/sites/sit_website/academic_calendar.dart';
-import 'package:resit/features/exams/data/academic_record.dart';
+import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
-import 'package:resit/sites/xsite/xsite_activities.dart';
+import 'package:resit/features/lms/domain/activities.dart';
+import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/presentation/course_sections.dart';
 import 'package:resit/features/lms/presentation/courses_screen.dart';
-import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 import 'package:resit/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/exams/domain/academic_record.dart';
+import 'package:resit/sites/sit_website/academic_calendar_service.dart';
 
 final _sdk = Platform.environment['FLUTTER_ROOT'] ?? '/home/user/sdk/flutter';
 

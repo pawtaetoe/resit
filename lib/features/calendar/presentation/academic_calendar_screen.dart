@@ -6,7 +6,7 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/sites/sit_website/academic_calendar.dart';
+import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/core/widgets/desktop.dart';
 
 /// SIT's academic calendar: where today sits (week, trimester, what's next),

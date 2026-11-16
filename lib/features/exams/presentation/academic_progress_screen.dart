@@ -11,9 +11,9 @@ import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/auth_gate.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/features/exams/data/academic_record.dart';
 import 'package:resit/features/exams/presentation/exam_results_screen.dart';
 import 'package:resit/core/widgets/desktop.dart';
+import 'package:resit/features/exams/domain/academic_record.dart';
 
 /// Charts of the academic record: GPA by term, credits per term, and the
 /// spread of grades, each with a table view.

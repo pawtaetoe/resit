@@ -8,10 +8,10 @@ import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/features/common/data/private_store.dart';
-import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/features/timetable/presentation/timetable_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 DateTime _mondayOf(DateTime d) => DateTime(d.year, d.month, d.day - (d.weekday - 1));
 

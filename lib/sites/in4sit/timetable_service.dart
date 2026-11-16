@@ -4,47 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/sites/in4sit/peoplesoft.dart';
 import 'package:resit/core/network/session_client.dart';
-
-/// One class meeting on a specific date.
-class ClassSession {
-  final DateTime date; // date only
-  final String courseCode; // e.g. "CSC 2101"
-  final String section; // e.g. "L1", "P2", "ALL"
-  final String component; // Lectorial, Laboratory, ...
-  final int startMin;
-  final int endMin;
-  final String location;
-
-  /// ADFS/in4sit flags this when another class overlaps in time.
-  final bool coinciding;
-
-  ClassSession({
-    required this.date,
-    required this.courseCode,
-    required this.section,
-    required this.component,
-    required this.startMin,
-    required this.endMin,
-    required this.location,
-    required this.coinciding,
-  });
-
-  static String formatMinutes(int m) =>
-      '${(m ~/ 60).toString().padLeft(2, '0')}:${(m % 60).toString().padLeft(2, '0')}';
-
-  String get timeLabel => '${formatMinutes(startMin)} - ${formatMinutes(endMin)}';
-}
-
-class WeekSchedule {
-  final DateTime monday;
-  final List<ClassSession> sessions;
-
-  WeekSchedule(this.monday, this.sessions);
-
-  List<ClassSession> forDay(int dayIndex) => sessions
-      .where((s) => s.date == DateTime(monday.year, monday.month, monday.day + dayIndex))
-      .toList();
-}
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// Reads the "My Class Schedule > Weekly Calendar View" page of in4sit. The
 /// page is stateful on the server (PeopleSoft), so requests go through the

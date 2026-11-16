@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
-import 'package:resit/sites/sit_website/academic_calendar.dart';
+import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
@@ -14,9 +14,9 @@ import 'package:resit/core/widgets/mfa_card.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
 import 'package:resit/features/timetable/data/module_colours.dart';
-import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/core/widgets/desktop.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
 /// [initialDate] (this week by default). Signs in first if needed.

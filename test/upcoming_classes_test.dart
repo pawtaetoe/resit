@@ -8,6 +8,7 @@ import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
 
 ClassSession _s(DateTime day, int start, int end, [String code = 'CSC 2101']) => ClassSession(
       date: day,

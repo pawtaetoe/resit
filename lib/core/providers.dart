@@ -8,16 +8,20 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/auth/session_controller.dart';
 import 'package:resit/sites/adfs/totp.dart';
 import 'package:resit/sites/rbs/booking_service.dart';
-import 'package:resit/features/room_booking/data/models.dart';
-import 'package:resit/features/room_booking/data/quota.dart';
-import 'package:resit/sites/sit_website/academic_calendar.dart';
-import 'package:resit/features/exams/data/academic_record.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
+import 'package:resit/features/room_booking/domain/quota.dart';
+import 'package:resit/features/calendar/domain/academic_calendar.dart';
+import 'package:resit/features/exams/data/academic_record_service.dart';
 import 'package:resit/sites/in4sit/exam_service.dart';
-import 'package:resit/sites/xsite/xsite_activities.dart';
+import 'package:resit/features/lms/domain/activities.dart';
+import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/sites/in4sit/timetable_service.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/features/timetable/data/upcoming_classes.dart';
+import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/exams/domain/academic_record.dart';
+import 'package:resit/sites/sit_website/academic_calendar_service.dart';
 
 final secureStorageProvider = Provider<SecureStorage>((ref) {
   return SecureStorage();

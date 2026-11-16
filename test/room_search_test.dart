@@ -8,7 +8,7 @@ import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/core/network/session_client.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/sites/rbs/booking_service.dart';
-import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Room _room(String id) =>

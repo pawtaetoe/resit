@@ -7,7 +7,7 @@ import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/sites/sit_website/academic_calendar.dart';
+import 'package:resit/features/calendar/domain/academic_calendar.dart';
 import 'package:resit/features/calendar/presentation/academic_calendar_screen.dart';
 import 'package:resit/features/exams/presentation/academic_progress_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';

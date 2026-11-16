@@ -1,5 +1,5 @@
 import 'package:intl/intl.dart';
-import 'package:resit/features/room_booking/data/models.dart';
+import 'package:resit/features/room_booking/domain/rooms.dart';
 
 /// Each student may book up to 4 hours a week per room type: 4 h of
 /// discussion rooms and, separately, 4 h of meeting rooms.
