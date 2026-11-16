@@ -19,6 +19,7 @@ import 'package:resit/features/timetable/data/module_colours.dart';
 import 'package:resit/features/timetable/data/timetable_store.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/timetable/ui/week_grid_layout.dart';
 
 /// The weekly class timetable from in4SIT. Opens at the week of
 /// [initialDate] (this week by default). Signs in first if needed.
@@ -62,19 +63,9 @@ const _courseColors = [
   Color(0xFF3B47A0), // indigo
 ];
 
-class _PlacedSession {
-  final ClassSession session;
-  final int lane;
-  final int laneCount;
-
-  _PlacedSession(this.session, this.lane, this.laneCount);
-}
-
 class _TimetableScreenState extends ConsumerState<_Timetable> {
   // The week pager is "infinite": page 1000 is the current week.
   static const _initialPage = 1000;
-  static const _timeColumnWidth = 44.0;
-  static const _dayCount = 5; // Monday to Friday
 
   /// An hour's height: grows with the user's text size, so class text fits.
   double get _hourHeight => MediaQuery.textScalerOf(context).scale(60).clamp(60.0, 132.0);
@@ -189,7 +180,7 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
   }
 
   String _weekLabel(DateTime monday) {
-    final friday = DateTime(monday.year, monday.month, monday.day + _dayCount - 1);
+    final friday = DateTime(monday.year, monday.month, monday.day + WeekGridLayout.dayCount - 1);
     final sameYear = monday.year == friday.year;
     final start = DateFormat(sameYear ? 'd MMM' : 'd MMM yyyy').format(monday);
     final end = DateFormat('d MMM yyyy').format(friday);
@@ -218,42 +209,6 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
 
   Color _courseColor(String code) =>
       _courseColors[(_colours[moduleKey(code)] ?? code.hashCode.abs()) % _courseColors.length];
-
-  /// Lays out one day's sessions side by side where they overlap in time.
-  List<_PlacedSession> _layoutDay(List<ClassSession> sessions) {
-    final sorted = [...sessions]..sort((a, b) => a.startMin.compareTo(b.startMin));
-    final placed = <_PlacedSession>[];
-
-    var cluster = <ClassSession>[];
-    var clusterEnd = 0;
-
-    void flush() {
-      final laneEnds = <int>[];
-      final lanes = <int>[];
-      for (final s in cluster) {
-        var lane = laneEnds.indexWhere((end) => end <= s.startMin);
-        if (lane == -1) {
-          laneEnds.add(s.endMin);
-          lane = laneEnds.length - 1;
-        } else {
-          laneEnds[lane] = s.endMin;
-        }
-        lanes.add(lane);
-      }
-      for (var i = 0; i < cluster.length; i++) {
-        placed.add(_PlacedSession(cluster[i], lanes[i], laneEnds.length));
-      }
-      cluster = [];
-    }
-
-    for (final s in sorted) {
-      if (cluster.isNotEmpty && s.startMin >= clusterEnd) flush();
-      cluster.add(s);
-      clusterEnd = cluster.length == 1 ? s.endMin : (s.endMin > clusterEnd ? s.endMin : clusterEnd);
-    }
-    if (cluster.isNotEmpty) flush();
-    return placed;
-  }
 
   void _showDetails(ClassSession s) {
     showModalBottomSheet<void>(
@@ -306,15 +261,10 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
     final today = DateTime.now();
     final sessions = week?.sessions ?? const <ClassSession>[];
 
-    final minStart = sessions.map((s) => s.startMin).fold<int>(8 * 60, (a, b) => a < b ? a : b);
-    final maxEnd = sessions.map((s) => s.endMin).fold<int>(18 * 60, (a, b) => a > b ? a : b);
-    final startHour = minStart ~/ 60;
-    final endHour = (maxEnd + 59) ~/ 60;
-    final hourHeight = _hourHeight;
-    final gridHeight = (endHour - startHour) * hourHeight;
+    final layout = WeekGridLayout.fit(sessions, hourHeight: _hourHeight);
 
     return LayoutBuilder(builder: (context, constraints) {
-      final colWidth = (constraints.maxWidth - _timeColumnWidth) / _dayCount;
+      final colWidth = (constraints.maxWidth - WeekGridLayout.timeColumnWidth) / WeekGridLayout.dayCount;
       final theme = Theme.of(context);
       final scheme = theme.colorScheme;
       final small = theme.textTheme.labelSmall;
@@ -322,12 +272,12 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       final nowDate = DateTime(today.year, today.month, today.day);
       final todayIndex = nowDate.difference(monday).inDays;
       final nowMin = today.hour * 60 + today.minute;
-      final showNow = todayIndex >= 0 && todayIndex < _dayCount && nowMin >= startHour * 60 && nowMin <= endHour * 60;
+      final showNow = todayIndex >= 0 && todayIndex < WeekGridLayout.dayCount && layout.shows(nowMin);
 
       final header = Row(
         children: [
-          const SizedBox(width: _timeColumnWidth),
-          for (var d = 0; d < _dayCount; d++)
+          const SizedBox(width: WeekGridLayout.timeColumnWidth),
+          for (var d = 0; d < WeekGridLayout.dayCount; d++)
             Builder(builder: (_) {
               final date = DateTime(monday.year, monday.month, monday.day + d);
               final isToday = date.year == today.year && date.month == today.month && date.day == today.day;
@@ -357,18 +307,18 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
       );
 
       final grid = SizedBox(
-        height: gridHeight,
+        height: layout.height,
         child: Stack(
           children: [
-            for (var h = startHour; h <= endHour; h++)
+            for (var h = layout.startHour; h <= layout.endHour; h++)
               Positioned(
-                top: (h - startHour) * hourHeight,
+                top: layout.hourTop(h),
                 left: 0,
                 right: 0,
                 child: Row(
                   children: [
                     SizedBox(
-                      width: _timeColumnWidth,
+                      width: WeekGridLayout.timeColumnWidth,
                       child: Transform.translate(
                         offset: const Offset(0, -7),
                         child: Text(
@@ -382,27 +332,25 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
                   ],
                 ),
               ),
-            for (var d = 0; d < _dayCount; d++) ...[
+            for (var d = 0; d < WeekGridLayout.dayCount; d++) ...[
               if (d > 0)
                 Positioned(
-                  left: _timeColumnWidth + d * colWidth,
+                  left: WeekGridLayout.timeColumnWidth + d * colWidth,
                   top: 0,
                   bottom: 0,
                   child: VerticalDivider(width: 1, color: scheme.outlineVariant.withValues(alpha: 0.6)),
                 ),
               if (week != null)
-                for (final placed in _layoutDay(week.forDay(d)))
+                for (final placed in WeekGridLayout.placeDay(week.forDay(d)))
                   Builder(builder: (_) {
                     final s = placed.session;
                     final laneWidth = colWidth / placed.laneCount;
                     final color = _courseColor(s.courseCode);
-                    // At least 40 px tall, so a short class is still easy to tap.
-                    final height = ((s.endMin - s.startMin) / 60 * hourHeight - 2).clamp(40.0, double.infinity);
                     return Positioned(
-                      left: _timeColumnWidth + d * colWidth + placed.lane * laneWidth + 1,
-                      top: (s.startMin - startHour * 60) / 60 * hourHeight + 1,
+                      left: WeekGridLayout.timeColumnWidth + d * colWidth + placed.lane * laneWidth + 1,
+                      top: layout.minuteTop(s.startMin) + 1,
                       width: laneWidth - 2,
-                      height: height,
+                      height: layout.blockHeight(s),
                       // One node for screen readers, with the tap on it.
                       child: Semantics(
                         button: true,
@@ -438,9 +386,9 @@ class _TimetableScreenState extends ConsumerState<_Timetable> {
             ],
             if (showNow)
               Positioned(
-                left: _timeColumnWidth + todayIndex * colWidth - 4,
+                left: WeekGridLayout.timeColumnWidth + todayIndex * colWidth - 4,
                 width: colWidth + 4,
-                top: (nowMin - startHour * 60) / 60 * hourHeight - 4,
+                top: layout.minuteTop(nowMin) - 4,
                 child: IgnorePointer(
                   child: Row(
                     children: [
