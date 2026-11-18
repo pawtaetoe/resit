@@ -100,15 +100,6 @@ Loading and then reloading, filtered to pages: 3 of 133 requests, 35 kB of 354 k
 
 </details>
 
-## Benefits for SIT
-
-- **Higher student satisfaction.** reSIT removes most of the friction students complain about daily: repeated MFA prompts, slow pages, and sites that are hard to use on a phone.
-- **Resilience during outages.** When in4SIT is down, students can still see where their next class is. That means fewer students stranded, and fewer queries to staff, during an incident.
-- **Fewer missed deadlines and fewer support questions.** A single "Due soon" list and clear class and room details answer "where and when?" before students email staff or IT.
-- **Lighter on students' devices and on SIT's sites.** Loading the timetable takes reSIT 1 request and 13 kB, against 47 requests and 278 kB in a browser (see [Measured](#measured-loading-the-weekly-timetable)). The timetable page itself, the part in4SIT has to build, is fetched once and not again when the student reopens it. reSIT also caches what rarely changes, removes duplicate requests and limits how many run at once (at most 4 to xSiTe).
-- **A path to more student services, with official access.** With an official API, reSIT could add things that scraping cannot safely do. One example is **tuition-fee payment and reminders**: showing the amount due and the deadline on Home, sending a notification before it falls due, and paying in a few taps. That would encourage prompt fee payment and reduce the follow-up work for the Finance office.
-- **Built by a student, for students,** in the open, with tests and an automated build for every platform.
-
 ## Security and privacy
 
 Security is the first design concern, because the app handles a student's SIT account.
