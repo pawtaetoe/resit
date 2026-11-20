@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/core/providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/features/exams/exams_providers.dart';
+import 'package:resit/features/lms/course_extras_providers.dart';
 import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -67,6 +68,7 @@ class AccountService {
     _ref.read(lmsServiceProvider).clearCache();
     _ref.invalidate(lmsProgressProvider);
     _ref.invalidate(lmsContentsProvider);
+    await clearCourseExtras(_ref);
     for (final p in [
       lmsAnnouncementsProvider,
       lmsAssignmentsProvider,

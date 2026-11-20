@@ -7,6 +7,7 @@ import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/sites/xsite/xsite_client.dart';
 import 'package:resit/sites/xsite/activity_parsers.dart';
 import 'package:resit/sites/xsite/brightspace_json.dart';
+import 'package:resit/sites/xsite/course_extras_service.dart';
 import 'package:resit/sites/xsite/course_parsers.dart';
 
 export 'package:resit/sites/xsite/lms_unavailable_exception.dart' show LmsUnavailableException;
@@ -58,6 +59,9 @@ class LmsService {
   LmsService(this.auth, {DateTime Function()? now})
       : _now = now ?? DateTime.now,
         _xsite = XsiteClient(auth, maxInFlight: maxInFlight);
+
+  /// The course overview, content files, checklists and surveys.
+  late final extras = XsiteCourseExtras(_xsite, now: _now);
 
   /// Every course on xSiTe, signing in to xSiTe first if needed. Reused for
   /// [coursesTtl]; [force] asks xSiTe again.
