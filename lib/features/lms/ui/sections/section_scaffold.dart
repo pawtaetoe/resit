@@ -24,6 +24,9 @@ class SectionScaffold<T> extends ConsumerWidget {
   final List<Widget> Function(BuildContext, T) build_;
   final Widget? barExtra;
 
+  /// The bottom bar button's label.
+  final String xsiteLabel;
+
   const SectionScaffold({
     super.key,
     required this.course,
@@ -35,6 +38,7 @@ class SectionScaffold<T> extends ConsumerWidget {
     required this.emptyText,
     required List<Widget> Function(BuildContext, T) builder,
     this.barExtra,
+    this.xsiteLabel = 'Open in xSiTe',
   }) : build_ = builder;
 
   @override
@@ -82,7 +86,7 @@ class SectionScaffold<T> extends ConsumerWidget {
               child: FilledButton.tonalIcon(
                 onPressed: () => openInBrowser(context, xsitePage),
                 icon: const Icon(Icons.open_in_new),
-                label: const Text('Open in xSiTe', overflow: TextOverflow.ellipsis),
+                label: Text(xsiteLabel, overflow: TextOverflow.ellipsis),
               ),
             ),
             if (barExtra != null) ...[const SizedBox(width: 8), barExtra!],
