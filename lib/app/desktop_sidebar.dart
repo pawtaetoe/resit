@@ -4,6 +4,7 @@ import 'package:resit/features/calendar/ui/academic_calendar_screen.dart';
 import 'package:resit/features/exams/ui/academic_progress_screen.dart';
 import 'package:resit/features/exams/ui/exam_results_screen.dart';
 import 'package:resit/features/lms/ui/courses_screen.dart';
+import 'package:resit/features/lms/ui/xsite_calendar_screen.dart';
 import 'package:resit/features/room_booking/ui/dashboard_screen.dart';
 import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
 import 'package:resit/features/timetable/ui/timetable_screen.dart';
@@ -38,6 +39,12 @@ final List<DesktopDestination> desktopDestinations = [
       selectedIcon: Icons.menu_book,
       label: 'Courses',
       builder: (_) => const CoursesScreen()),
+  DesktopDestination(
+      group: 'xSiTe',
+      icon: Icons.event_outlined,
+      selectedIcon: Icons.event,
+      label: 'Calendar',
+      builder: (_) => const XsiteCalendarScreen()),
   DesktopDestination(
       group: 'Room booking',
       icon: Icons.meeting_room_outlined,

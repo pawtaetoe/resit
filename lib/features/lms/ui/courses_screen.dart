@@ -18,6 +18,8 @@ import 'package:resit/features/lms/ui/open_in_browser.dart';
 import 'package:resit/features/lms/ui/course_card.dart';
 import 'package:resit/features/lms/ui/term_due_soon.dart';
 import 'package:resit/features/lms/ui/term_announcements.dart';
+import 'package:resit/features/lms/lms_calendar_providers.dart';
+import 'package:resit/features/lms/ui/calendar_entry_tile.dart';
 
 /// Courses on xSiTe (SIT's LMS): this term's first, each with how much of
 /// its content is done. A course opens its to-do list.
@@ -60,7 +62,11 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
         });
     try {
       final courses = await withSignInRetry(ref, fetch);
-      if (refresh) ref.invalidate(lmsProgressProvider);
+      if (refresh) {
+        ref.invalidate(lmsProgressProvider);
+        ref.invalidate(lmsUpdatesProvider);
+        ref.invalidate(lmsCalendarProvider);
+      }
       if (mounted) setState(() => _courses = courses);
     } catch (e) {
       if (mounted) setState(() => _error = e);
@@ -149,6 +155,9 @@ class _CoursesScreenState extends ConsumerState<_Courses> {
               children: [
                 // Deadlines across this term's courses, soonest first.
                 TermDueSoon(courses: groups[terms.first]!),
+                // The calendar: due dates and events by day, next few weeks.
+                const CalendarEntryTile(),
+                const SizedBox(height: Space.section - Space.card),
                 // Announcements from this trimester's modules, newest first.
                 TermAnnouncements(courses: groups[terms.first]!),
                 for (final term in terms) ...[

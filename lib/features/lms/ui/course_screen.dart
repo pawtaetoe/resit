@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/lms_calendar_providers.dart';
+import 'package:resit/features/lms/ui/calendar_entry_tile.dart';
+import 'package:resit/features/lms/ui/new_badge.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/section_label.dart';
@@ -41,9 +44,11 @@ class CourseScreen extends ConsumerWidget {
       lmsGradesProvider(id),
       lmsGroupsProvider(id),
       lmsDiscussionsProvider(id),
+      lmsCourseUpdatesProvider(id),
     ]) {
       ref.invalidate(p);
     }
+    ref.invalidate(lmsCalendarProvider);
     ref.invalidate(lmsCourseDueProvider((id: id, code: course.courseCode)));
     await ref.read(lmsCourseDueProvider((id: id, code: course.courseCode)).future).catchError((_) => <DueItem>[]);
   }
@@ -60,6 +65,8 @@ class CourseScreen extends ConsumerWidget {
     final grades = ref.watch(lmsGradesProvider(id));
     final groups = ref.watch(lmsGroupsProvider(id));
     final discussions = ref.watch(lmsDiscussionsProvider(id));
+    // Counts of what's new; none shown while loading or if xSiTe won't say.
+    final updates = ref.watch(lmsCourseUpdatesProvider(id)).valueOrNull;
     void open(Widget screen) => Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
 
     /// A tile's subtitle from its section's state.
@@ -121,12 +128,15 @@ class CourseScreen extends ConsumerWidget {
                 final open = list.where((a) => !a.submitted && (a.endDate ?? a.deadline)?.isAfter(now) != false).length;
                 return list.isEmpty ? 'None' : '${list.length} · $open not submitted yet';
               }),
+              badge: _badge(updates?.unreadFeedback, 'new feedback', 'assignment with new feedback',
+                  'assignments with new feedback'),
               onTap: () => open(AssignmentsScreen(course: course)),
             ),
             _SectionTile(
               icon: Icons.quiz_outlined,
               title: 'Quizzes',
               subtitle: status(quizzes, (list) => list.isEmpty ? 'None' : '${list.length} quizzes'),
+              badge: _badge(updates?.unattemptedQuizzes, 'to attempt', 'quiz to attempt', 'quizzes to attempt'),
               onTap: () => open(QuizzesScreen(course: course)),
             ),
             _SectionTile(
@@ -153,8 +163,10 @@ class CourseScreen extends ConsumerWidget {
                 String n(int c, String s) => '$c $s${c == 1 ? '' : 's'}';
                 return forums.isEmpty ? 'None' : '${n(topics, 'topic')} in ${n(forums.length, 'forum')}';
               }),
+              badge: _badge(updates?.unreadDiscussions, 'unread', 'unread discussion post', 'unread discussion posts'),
               onTap: () => open(DiscussionsScreen(course: course)),
             ),
+            CalendarEntryTile(course: course),
           ],
         ),
       ),
@@ -162,12 +174,21 @@ class CourseScreen extends ConsumerWidget {
   }
 }
 
+/// "2 new feedback" for a section tile, read out as "2 assignments with new
+/// feedback"; nothing when there are none.
+Widget? _badge(int? n, String label, String one, String many) =>
+    n == null || n <= 0 ? null : NewBadge(label: '$n $label', semanticsLabel: '$n ${n == 1 ? one : many}');
+
 class _SectionTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
-  const _SectionTile({required this.icon, required this.title, required this.subtitle, required this.onTap});
+
+  /// A small "what's new" chip beside the title.
+  final Widget? badge;
+  const _SectionTile(
+      {required this.icon, required this.title, required this.subtitle, required this.onTap, this.badge});
 
   @override
   Widget build(BuildContext context) {
@@ -183,7 +204,12 @@ class _SectionTile extends StatelessWidget {
             foregroundColor: scheme.onPrimaryContainer,
             child: Icon(icon),
           ),
-          title: Text(title, style: Theme.of(context).textTheme.titleMedium),
+          title: Row(
+            children: [
+              Flexible(child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
+              if (badge != null) ...[const SizedBox(width: 8), badge!],
+            ],
+          ),
           subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
           trailing: const Icon(Icons.chevron_right),
         ),
