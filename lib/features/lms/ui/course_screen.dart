@@ -18,9 +18,12 @@ import 'package:resit/features/lms/ui/sections/assignments_screen.dart';
 import 'package:resit/features/lms/ui/sections/quizzes_screen.dart';
 import 'package:resit/features/lms/ui/sections/grades_screen.dart';
 import 'package:resit/features/lms/ui/sections/groups_screen.dart';
+import 'package:resit/features/lms/course_extras_providers.dart';
+import 'package:resit/features/lms/ui/sections/checklists_surveys_screen.dart';
 
 /// One course: progress through its content, what's due soon, and its
-/// sections (content, announcements, assignments, quizzes, grades, groups).
+/// sections (content, announcements, assignments, quizzes, grades, groups,
+/// checklists and surveys).
 /// Opening it starts loading every section at once (a few requests at a
 /// time), so each is usually ready by the time it's tapped.
 class CourseScreen extends ConsumerWidget {
@@ -37,6 +40,7 @@ class CourseScreen extends ConsumerWidget {
       lmsQuizzesProvider(id),
       lmsGradesProvider(id),
       lmsGroupsProvider(id),
+      lmsChecklistsSurveysProvider(id),
     ]) {
       ref.invalidate(p);
     }
@@ -55,6 +59,7 @@ class CourseScreen extends ConsumerWidget {
     final quizzes = ref.watch(lmsQuizzesProvider(id));
     final grades = ref.watch(lmsGradesProvider(id));
     final groups = ref.watch(lmsGroupsProvider(id));
+    final checklists = ref.watch(lmsChecklistsSurveysProvider(id));
     void open(Widget screen) => Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
 
     /// A tile's subtitle from its section's state.
@@ -139,6 +144,12 @@ class CourseScreen extends ConsumerWidget {
               title: 'Groups',
               subtitle: status(groups, (list) => list.isEmpty ? "You're not in a group" : list.map((g) => g.name).join(', ')),
               onTap: () => open(GroupsScreen(course: course)),
+            ),
+            _SectionTile(
+              icon: Icons.checklist,
+              title: 'Checklists and surveys',
+              subtitle: status(checklists, (v) => v.summary),
+              onTap: () => open(ChecklistsSurveysScreen(course: course)),
             ),
           ],
         ),
