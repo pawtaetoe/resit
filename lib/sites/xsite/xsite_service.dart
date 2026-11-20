@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
+import 'package:resit/features/lms/domain/results.dart';
+import 'package:resit/sites/xsite/results_service.dart';
 import 'package:resit/sites/xsite/xsite_client.dart';
 import 'package:resit/sites/xsite/activity_parsers.dart';
 import 'package:resit/sites/xsite/brightspace_json.dart';
@@ -169,6 +171,20 @@ class LmsService {
   }
 
   String? _myId;
+
+  /// Your xSiTe user id, asked once until signed out.
+  Future<String> _whoAmI(void Function(MfaChallenge)? onMfaChallenge) async =>
+      _myId ??= parseWhoAmI(await _api('$_lp/users/whoami', onMfaChallenge));
+
+  late final _results = XsiteResults(_xsite, myId: _whoAmI);
+
+  /// Your released feedback on an assignment, or null (see [XsiteResults.feedback]).
+  Future<AssignmentFeedback?> feedback(Assignment a, {void Function(MfaChallenge)? onMfaChallenge}) =>
+      _results.feedback(a, onMfaChallenge: onMfaChallenge);
+
+  /// Your attempts at a quiz (see [XsiteResults.quizAttempts]).
+  Future<List<QuizAttempt>> quizAttempts(Quiz q, {void Function(MfaChallenge)? onMfaChallenge}) =>
+      _results.quizAttempts(q, onMfaChallenge: onMfaChallenge);
 
   /// The groups you're in for a course, with members' names when the class
   /// list can be read.

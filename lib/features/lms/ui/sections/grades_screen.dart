@@ -7,7 +7,7 @@ import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/sections/section_scaffold.dart';
-import 'package:resit/features/lms/ui/sections/more_text.dart';
+import 'package:resit/features/lms/ui/results/detail_widgets.dart';
 
 class GradesScreen extends ConsumerWidget {
   final LmsCourse course;
@@ -35,6 +35,10 @@ class GradesScreen extends ConsumerWidget {
             caption: 'final grade',
             semanticsLabel: visible ? null : 'Final grade, hidden',
           ),
+          if (f.comment.isNotEmpty) ...[
+            const SizedBox(height: Space.card),
+            DetailCard(children: [InstructorComment(f.comment)]),
+          ],
           const SizedBox(height: Space.section),
         ],
         for (final e in g.items)
@@ -77,7 +81,7 @@ class GradesScreen extends ConsumerWidget {
                           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                         ),
                       ),
-                    if (visible && e.comment.isNotEmpty) ...[const SizedBox(height: 8), MoreText(e.comment, lines: 3)],
+                    if (e.comment.isNotEmpty) ...[const SizedBox(height: 10), InstructorComment(e.comment)],
                   ],
                 ),
               ),

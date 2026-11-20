@@ -7,7 +7,7 @@ import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/grade_privacy.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
-import 'package:resit/features/lms/ui/open_in_browser.dart';
+import 'package:resit/features/lms/ui/results/assignment_detail_screen.dart';
 import 'package:resit/features/lms/ui/due_tile.dart';
 import 'package:resit/features/lms/ui/sections/section_scaffold.dart';
 import 'package:resit/features/lms/ui/sections/more_text.dart';
@@ -41,7 +41,8 @@ class AssignmentsScreen extends ConsumerWidget {
               child: Card(
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
-                  onTap: () => openInBrowser(context, a.url),
+                  onTap: () => Navigator.push(
+                      context, MaterialPageRoute(builder: (_) => AssignmentDetailScreen(course: course, assignment: a))),
                   child: Padding(
                     padding: const EdgeInsets.all(Space.inset),
                     child: Column(
@@ -50,7 +51,7 @@ class AssignmentsScreen extends ConsumerWidget {
                         Row(
                           children: [
                             Expanded(child: Text(a.name, style: theme.textTheme.titleMedium)),
-                            Icon(Icons.open_in_new, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                            Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant),
                           ],
                         ),
                         const SizedBox(height: 6),
