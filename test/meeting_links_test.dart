@@ -25,8 +25,7 @@ void main() {
     });
 
     test('Teams, Meet and Webex meeting links', () {
-      expect(
-          _service('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%7d'),
+      expect(_service('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%7d'),
           MeetingService.teams);
       expect(_service('https://teams.microsoft.com/meet/123456789?p=abc'), MeetingService.teams);
       expect(_service('https://teams.live.com/meet/9876543210'), MeetingService.teams);
@@ -94,7 +93,8 @@ void main() {
   group('finding links in an announcement', () {
     test('a link only in the HTML (its text says "here") is found', () {
       final links = findMeetingLinks(
-        html: '<p>Week 5 lecture is online. Join <a href="https://sit-edu.zoom.us/j/91234567890?pwd=Ab1&amp;from=addon">here</a>.</p>',
+        html:
+            '<p>Week 5 lecture is online. Join <a href="https://sit-edu.zoom.us/j/91234567890?pwd=Ab1&amp;from=addon">here</a>.</p>',
         text: 'Week 5 lecture is online. Join here.',
       );
       expect(links, hasLength(1));
@@ -119,7 +119,8 @@ Passcode: inf2004!
 
     test('details written before the link, and in other wordings', () {
       final links = findMeetingLinks(
-        html: '<p>Meeting ID: 987 6543 2109<br>Password: 55aa</p><p>Link: <a href="https://zoom.us/j/98765432109">https://zoom.us/j/98765432109</a></p>',
+        html:
+            '<p>Meeting ID: 987 6543 2109<br>Password: 55aa</p><p>Link: <a href="https://zoom.us/j/98765432109">https://zoom.us/j/98765432109</a></p>',
       );
       expect(links.single.meetingId, '987 6543 2109');
       expect(links.single.passcode, '55aa');
@@ -138,7 +139,8 @@ Passcode: inf2004!
 
     test('Webex "meeting number (access code)" and Meet with no details', () {
       final webex = findMeetingLinks(
-          text: 'https://sit.webex.com/sit/j.php?MTID=mabc\nMeeting number (access code): 2512 345 6789\nMeeting password: Tue123');
+          text:
+              'https://sit.webex.com/sit/j.php?MTID=mabc\nMeeting number (access code): 2512 345 6789\nMeeting password: Tue123');
       expect(webex.single.service, MeetingService.webex);
       expect(webex.single.meetingId, '2512 345 6789');
       expect(webex.single.passcode, 'Tue123');
@@ -181,11 +183,13 @@ Passcode: tut
     });
 
     test('Outlook safe links are unwrapped to the meeting inside', () {
-      final wrapped = 'https://apc01.safelinks.protection.outlook.com/?url=${Uri.encodeComponent('https://zoom.us/j/1234567890?pwd=a')}&data=x';
+      final wrapped =
+          'https://apc01.safelinks.protection.outlook.com/?url=${Uri.encodeComponent('https://zoom.us/j/1234567890?pwd=a')}&data=x';
       final links = findMeetingLinks(html: '<a href="${wrapped.replaceAll('&', '&amp;')}">Join</a>');
       expect(links.single.url.toString(), 'https://zoom.us/j/1234567890?pwd=a');
       // A safe link wrapping something else is still nothing.
-      final other = 'https://apc01.safelinks.protection.outlook.com/?url=${Uri.encodeComponent('https://zoom.us.evil.com/j/1')}';
+      final other =
+          'https://apc01.safelinks.protection.outlook.com/?url=${Uri.encodeComponent('https://zoom.us.evil.com/j/1')}';
       expect(findMeetingLinks(text: other), isEmpty);
     });
 
@@ -202,7 +206,8 @@ Passcode: tut
         'Title': 'Online lecture',
         'Body': {
           'Text': 'Week 9 lecture is online. Join here.\nPasscode: 4004',
-          'Html': '<p>Week 9 lecture is online. Join <a href="https://sit-edu.zoom.us/j/91234567890">here</a>.</p><p>Passcode: 4004</p>',
+          'Html':
+              '<p>Week 9 lecture is online. Join <a href="https://sit-edu.zoom.us/j/91234567890">here</a>.</p><p>Passcode: 4004</p>',
         },
         'StartDate': '2026-11-02T01:00:00.000Z',
       },
@@ -226,7 +231,13 @@ Passcode: tut
         Announcement(id: '$day', title: 't', body: '', date: DateTime(2026, 11, day), meetings: links);
     final older = MeetingLink(url: Uri.parse('https://zoom.us/j/1111111111'), service: MeetingService.zoom);
     final newer = MeetingLink(url: Uri.parse('https://zoom.us/j/2222222222'), service: MeetingService.zoom);
-    expect(latestMeetingLink([a(1, [older]), a(9, [newer]), a(12, [])]), newer);
+    expect(
+        latestMeetingLink([
+          a(1, [older]),
+          a(9, [newer]),
+          a(12, [])
+        ]),
+        newer);
     expect(latestMeetingLink([a(12, [])]), isNull);
     expect(latestMeetingLink(const []), isNull);
   });

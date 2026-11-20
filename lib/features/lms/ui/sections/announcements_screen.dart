@@ -7,6 +7,7 @@ import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/sections/section_scaffold.dart';
 import 'package:resit/features/lms/ui/sections/more_text.dart';
+import 'package:resit/features/lms/ui/meeting_actions.dart';
 
 String _dateLabel(DateTime d) => DateFormat('d MMM yyyy, HH:mm').format(d);
 
@@ -40,6 +41,7 @@ class AnnouncementsScreen extends StatelessWidget {
                       Text(_dateLabel(a.date!),
                           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                     if (a.body.isNotEmpty) ...[const SizedBox(height: 8), MoreText(a.body)],
+                    for (final m in a.meetings.take(3)) ...[const SizedBox(height: 8), MeetingActions(m)],
                     if (a.attachments > 0) ...[
                       const SizedBox(height: 8),
                       StatusPill(
