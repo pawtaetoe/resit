@@ -5,14 +5,18 @@ import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/core/ui/feedback.dart';
 import 'package:resit/core/widgets/panels.dart';
 import 'package:resit/core/widgets/thumb_bar.dart';
-import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/core/widgets/desktop.dart';
+import 'package:resit/features/lms/course_extras_providers.dart';
+import 'package:resit/features/lms/ui/course_overview_card.dart';
 import 'package:resit/features/lms/ui/open_in_browser.dart';
+import 'package:resit/features/lms/ui/open_topic.dart';
+import 'package:resit/features/lms/ui/topic_tile.dart';
 
-/// A course's content, folder by folder, as on xSiTe, with how much is done. Done items stay listed (ticked and dimmed) so they can be opened
-/// again. Items open in the browser: links at their own address, files on
-/// xSiTe.
+/// A course's content, folder by folder, as on xSiTe, with how much is
+/// done and the course overview on top. Done items stay listed (ticked and
+/// dimmed) so they can be opened again. Links open at their own address;
+/// documents in the device's viewer where it can, otherwise on xSiTe.
 class CourseContentScreen extends ConsumerStatefulWidget {
   final LmsCourse course;
   const CourseContentScreen({super.key, required this.course});
@@ -27,6 +31,7 @@ class _CourseContentScreenState extends ConsumerState<CourseContentScreen> {
   Future<void> _refresh() async {
     ref.invalidate(lmsProgressProvider(course.orgUnitId));
     ref.invalidate(lmsContentsProvider(course.orgUnitId));
+    ref.invalidate(lmsOverviewProvider(course.orgUnitId));
     await Future.wait([
       ref.read(lmsProgressProvider(course.orgUnitId).future),
       ref.read(lmsContentsProvider(course.orgUnitId).future),
@@ -74,6 +79,7 @@ class _CourseContentScreenState extends ConsumerState<CourseContentScreen> {
           children: [
             if (p != null) _ProgressCard(course: course, progress: p),
             const SizedBox(height: 12),
+            CourseOverviewCard(course: course),
             if (shown.isEmpty)
               const MessageView(
                 icon: Icons.task_alt,
@@ -94,7 +100,7 @@ class _CourseContentScreenState extends ConsumerState<CourseContentScreen> {
       appBar: thumbAppBar('Content', subtitle: '${course.courseCode} · ${course.title}'),
       bottomNavigationBar: ThumbBar(
         child: FilledButton.tonalIcon(
-          onPressed: () => openInBrowser(context, Uri.parse('${LmsService.base}/d2l/le/content/${course.orgUnitId}/Home')),
+          onPressed: () => openInBrowser(context, contentHome(course)),
           icon: const Icon(Icons.open_in_new),
           label: const Text('Open in xSiTe', overflow: TextOverflow.ellipsis),
         ),
@@ -149,7 +155,7 @@ class _ModuleCard extends StatelessWidget {
     final done = all.where(isDone).length;
 
     List<Widget> rows(ContentModule m, int depth) => [
-          for (final t in m.topics) _TopicTile(topic: t, done: isDone(t)),
+          for (final t in m.topics) TopicTile(topic: t, done: isDone(t)),
           for (final sub in m.modules) ...[
             Padding(
               padding: EdgeInsets.fromLTRB(16.0 + depth * 12, 12, 16, 4),
@@ -175,39 +181,6 @@ class _ModuleCard extends StatelessWidget {
         childrenPadding: const EdgeInsets.only(bottom: 8),
         children: rows(module, 0),
       ),
-    );
-  }
-}
-
-class _TopicTile extends StatelessWidget {
-  final ContentTopic topic;
-  final bool done;
-  const _TopicTile({required this.topic, required this.done});
-
-  IconData get _icon => switch (topic.extension) {
-        'pdf' => Icons.picture_as_pdf_outlined,
-        'mp4' || 'mov' || 'webm' => Icons.play_circle_outline,
-        'doc' || 'docx' => Icons.description_outlined,
-        'ppt' || 'pptx' => Icons.slideshow_outlined,
-        'html' || 'htm' => Icons.web_outlined,
-        _ when topic.type == 'ContentService' => Icons.play_circle_outline,
-        _ when topic.isLink => Icons.link,
-        _ => Icons.insert_drive_file_outlined,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final muted = theme.colorScheme.onSurfaceVariant;
-    return ListTile(
-      leading: Icon(_icon, color: done ? muted : theme.colorScheme.primary),
-      title: Text(topic.title, style: done ? TextStyle(color: muted) : null),
-      subtitle:
-          topic.description.isEmpty ? null : Text(topic.description, maxLines: 3, overflow: TextOverflow.ellipsis),
-      trailing: done
-          ? Icon(Icons.check_circle, color: theme.colorScheme.primary, semanticLabel: 'Done')
-          : Icon(Icons.open_in_new, size: 18, color: muted),
-      onTap: () => openInBrowser(context, topic.openUrl),
     );
   }
 }

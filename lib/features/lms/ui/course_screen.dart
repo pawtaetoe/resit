@@ -24,9 +24,12 @@ import 'package:resit/features/lms/ui/sections/groups_screen.dart';
 import 'package:resit/features/lms/discussions_providers.dart';
 import 'package:resit/features/lms/ui/sections/discussions_screen.dart';
 
+import 'package:resit/features/lms/course_extras_providers.dart';
+import 'package:resit/features/lms/ui/sections/checklists_surveys_screen.dart';
+
 /// One course: progress through its content, what's due soon, and its
 /// sections (content, announcements, assignments, quizzes, grades, groups,
-/// discussions).
+/// discussions, checklists and surveys).
 /// Opening it starts loading every section at once (a few requests at a
 /// time), so each is usually ready by the time it's tapped.
 class CourseScreen extends ConsumerWidget {
@@ -45,6 +48,7 @@ class CourseScreen extends ConsumerWidget {
       lmsGroupsProvider(id),
       lmsDiscussionsProvider(id),
       lmsCourseUpdatesProvider(id),
+      lmsChecklistsSurveysProvider(id),
     ]) {
       ref.invalidate(p);
     }
@@ -67,6 +71,7 @@ class CourseScreen extends ConsumerWidget {
     final discussions = ref.watch(lmsDiscussionsProvider(id));
     // Counts of what's new; none shown while loading or if xSiTe won't say.
     final updates = ref.watch(lmsCourseUpdatesProvider(id)).valueOrNull;
+    final checklists = ref.watch(lmsChecklistsSurveysProvider(id));
     void open(Widget screen) => Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
 
     /// A tile's subtitle from its section's state.
@@ -152,7 +157,8 @@ class CourseScreen extends ConsumerWidget {
             _SectionTile(
               icon: Icons.groups_outlined,
               title: 'Groups',
-              subtitle: status(groups, (list) => list.isEmpty ? "You're not in a group" : list.map((g) => g.name).join(', ')),
+              subtitle:
+                  status(groups, (list) => list.isEmpty ? "You're not in a group" : list.map((g) => g.name).join(', ')),
               onTap: () => open(GroupsScreen(course: course)),
             ),
             _SectionTile(
@@ -165,6 +171,12 @@ class CourseScreen extends ConsumerWidget {
               }),
               badge: _badge(updates?.unreadDiscussions, 'unread', 'unread discussion post', 'unread discussion posts'),
               onTap: () => open(DiscussionsScreen(course: course)),
+            ),
+            _SectionTile(
+              icon: Icons.checklist,
+              title: 'Checklists and surveys',
+              subtitle: status(checklists, (v) => v.summary),
+              onTap: () => open(ChecklistsSurveysScreen(course: course)),
             ),
             CalendarEntryTile(course: course),
           ],

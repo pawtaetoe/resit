@@ -7,6 +7,8 @@ import 'package:resit/features/lms/domain/discussions.dart';
 import 'package:resit/features/lms/lms_calendar_providers.dart';
 import 'package:resit/features/lms/domain/calendar.dart';
 import 'package:resit/features/lms/domain/updates.dart';
+import 'package:resit/features/lms/course_extras_providers.dart';
+import 'package:resit/features/lms/domain/course_extras.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/course_screen.dart';
@@ -14,8 +16,8 @@ import 'package:resit/features/lms/ui/due_tile.dart';
 import 'package:resit/features/lms/ui/course_content_screen.dart';
 import 'package:resit/features/lms/ui/term_announcements.dart';
 
-ContentTopic _t(int id, String title, {bool unread = true}) => ContentTopic(
-    orgUnitId: '213443', id: id, title: title, type: 'File', url: '/content/$title.pdf', unread: unread);
+ContentTopic _t(int id, String title, {bool unread = true}) =>
+    ContentTopic(orgUnitId: '213443', id: id, title: title, type: 'File', url: '/content/$title.pdf', unread: unread);
 
 void main() {
   final course = LmsCourse(
@@ -25,12 +27,14 @@ void main() {
     semester: '2026/27 Trimester 1',
   );
   final modules = [
-    ContentModule(id: 1, title: 'Lecture', topics: [_t(10, 'W9 Sensor Fusion', unread: false), _t(11, 'W10 Optimisations')]),
+    ContentModule(
+        id: 1, title: 'Lecture', topics: [_t(10, 'W9 Sensor Fusion', unread: false), _t(11, 'W10 Optimisations')]),
     ContentModule(id: 2, title: 'Laboratory', topics: [_t(20, 'INF2004 Labs', unread: false)]),
   ];
   ContentItem item(int id, String title, int done) =>
       ContentItem(orgUnitId: '213443', objectId: id, title: title, required: 1, completed: done);
-  final progress = CourseProgress([item(10, 'W9 Sensor Fusion', 1), item(11, 'W10 Optimisations', 0), item(20, 'INF2004 Labs', 1)]);
+  final progress =
+      CourseProgress([item(10, 'W9 Sensor Fusion', 1), item(11, 'W10 Optimisations', 0), item(20, 'INF2004 Labs', 1)]);
 
   Future<void> pump(WidgetTester tester) async {
     await tester.pumpWidget(ProviderScope(
@@ -65,9 +69,10 @@ void main() {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         lmsProgressProvider('213443').overrideWith((ref) async => progress),
-        lmsAnnouncementsProvider('213443').overrideWith((ref) async => [Announcement(id: '1', title: 'Lab moved', body: 'x', date: DateTime(2026, 11, 2))]),
-        lmsAssignmentsProvider('213443').overrideWith(
-            (ref) async => [Assignment(orgUnitId: '213443', id: 1, name: 'Lab 3 report', dueDate: soon)]),
+        lmsAnnouncementsProvider('213443').overrideWith(
+            (ref) async => [Announcement(id: '1', title: 'Lab moved', body: 'x', date: DateTime(2026, 11, 2))]),
+        lmsAssignmentsProvider('213443')
+            .overrideWith((ref) async => [Assignment(orgUnitId: '213443', id: 1, name: 'Lab 3 report', dueDate: soon)]),
         lmsQuizzesProvider('213443').overrideWith((ref) async => <Quiz>[]),
         lmsGradesProvider('213443').overrideWith((ref) async => CourseGrades([])),
         lmsGroupsProvider('213443').overrideWith((ref) async => [MyGroup(category: 'Project', name: 'P2')]),
@@ -79,6 +84,8 @@ void main() {
                 LmsEvent(orgUnitId: '213443', id: 1, title: 'Lab test', start: soon, url: course.homeUrl),
               ]),
             ])),
+        lmsChecklistsSurveysProvider('213443').overrideWith((ref) async =>
+            ChecklistsAndSurveys(checklists: [Checklist(orgUnitId: '213443', id: 5, name: 'Start')], surveys: [])),
       ],
       child: MaterialApp(home: CourseScreen(course: course)),
     ));
@@ -100,6 +107,8 @@ void main() {
       'Groups',
       'P2',
       'Discussions',
+      'Checklists and surveys',
+      '1 checklist',
       'Calendar',
     ]) {
       await tester.scrollUntilVisible(find.text(s), 100);
@@ -114,13 +123,18 @@ void main() {
     LmsCourse c(String id, String code) =>
         LmsCourse(orgUnitId: id, name: '$code-Course [2026/27 T1]', code: 'SIT-$code', semester: '2026/27 Trimester 1');
     final a = c('1', 'INF2004'), b = c('2', 'CSC2101');
-    Announcement n(String t, int day) => Announcement(id: t, title: t, body: 'Body of $t', date: DateTime(2026, 11, day));
+    Announcement n(String t, int day) =>
+        Announcement(id: t, title: t, body: 'Body of $t', date: DateTime(2026, 11, day));
     await tester.pumpWidget(ProviderScope(
       overrides: [
         lmsAnnouncementsProvider('1').overrideWith((ref) async => [n('A1', 10), n('A2', 8), n('A3', 2)]),
         lmsAnnouncementsProvider('2').overrideWith((ref) async => [n('B1', 12), n('B2', 9), n('B3', 5), n('B4', 1)]),
       ],
-      child: MaterialApp(home: Scaffold(body: ListView(children: [TermAnnouncements(courses: [a, b])]))),
+      child: MaterialApp(
+          home: Scaffold(
+              body: ListView(children: [
+        TermAnnouncements(courses: [a, b])
+      ]))),
     ));
     await tester.pumpAndSettle();
 
