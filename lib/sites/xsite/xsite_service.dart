@@ -8,6 +8,7 @@ import 'package:resit/sites/xsite/xsite_client.dart';
 import 'package:resit/sites/xsite/activity_parsers.dart';
 import 'package:resit/sites/xsite/brightspace_json.dart';
 import 'package:resit/sites/xsite/course_parsers.dart';
+import 'package:resit/sites/xsite/xsite_calendar.dart';
 
 export 'package:resit/sites/xsite/lms_unavailable_exception.dart' show LmsUnavailableException;
 
@@ -58,6 +59,10 @@ class LmsService {
   LmsService(this.auth, {DateTime Function()? now})
       : _now = now ?? DateTime.now,
         _xsite = XsiteClient(auth, maxInFlight: maxInFlight);
+
+  /// The calendar and update counts across courses, through the same
+  /// signed-in, limited requests.
+  late final calendar = XsiteCalendar(_xsite);
 
   /// Every course on xSiTe, signing in to xSiTe first if needed. Reused for
   /// [coursesTtl]; [force] asks xSiTe again.
