@@ -5,6 +5,7 @@ import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/features/lms/discussions_providers.dart';
 import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/features/lms/meeting_providers.dart';
+import 'package:resit/features/lms/lms_calendar_providers.dart';
 import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -79,8 +80,13 @@ class AccountService {
       lmsGroupsProvider,
       lmsCourseDueProvider,
       moduleMeetingLinkProvider,
+      lmsCourseUpdatesProvider,
     ]) {
       _ref.invalidate(p);
+    }
+    // Only if loaded: invalidating one that isn't would load it.
+    for (final p in [lmsCalendarProvider, lmsUpdatesProvider]) {
+      if (_ref.exists(p)) _ref.invalidate(p);
     }
     if (forgetDetails) {
       // Settings that say something about the student (their modules,

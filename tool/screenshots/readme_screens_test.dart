@@ -24,6 +24,9 @@ import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/features/lms/discussions_providers.dart';
 import 'package:resit/features/lms/domain/discussions.dart';
+import 'package:resit/features/lms/lms_calendar_providers.dart';
+import 'package:resit/features/lms/domain/calendar.dart';
+import 'package:resit/features/lms/domain/updates.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
@@ -121,6 +124,30 @@ final _record = AcademicRecord(
   ],
   gradeCounts: const {'A': 5, 'A-': 4, 'B+': 2, 'B': 1},
 );
+
+/// The xSiTe calendar for the next four weeks.
+LmsAgenda _agenda() {
+  final from = DateTime(_now.year, _now.month, _now.day);
+  final to = from.add(const Duration(days: lmsCalendarDays));
+  LmsEvent ev(String ou, String code, String title, int day, int hour, {String location = '', LmsEventKind? kind}) =>
+      LmsEvent(
+        orgUnitId: ou,
+        id: title.hashCode,
+        title: title,
+        courseName: '$code-Course [2026/27 T1]',
+        courseCodeField: 'SIT-2610-$code',
+        start: DateTime(from.year, from.month, from.day + day, hour),
+        end: kind == null ? DateTime(from.year, from.month, from.day + day, hour + 2) : null,
+        location: location,
+        kind: kind ?? LmsEventKind.event,
+        url: Uri.parse('$xsiteBase/d2l/le/calendar/$ou'),
+      );
+  return LmsAgenda(from, to, agenda([
+    ev('1', 'INF2004', 'Lab 4 report due', 2, 23, kind: LmsEventKind.assignment),
+    ev('2', 'CSC2101', 'Sprint 3 review', 3, 14, location: 'SIT@Punggol E2-03-12'),
+    ev('3', 'CSC3104', 'Quiz 2 closes', 5, 23, kind: LmsEventKind.quiz),
+  ], from, to));
+}
 
 LmsCourse _course(String id, String code, String title, int daysAgo) => LmsCourse(
       orgUnitId: id,
@@ -259,6 +286,9 @@ List<Override> _overrides() => [
               DiscussionTopic(orgUnitId: id, forumId: 1, id: 2, name: 'Project ideas'),
             ]),
           ]),
+      lmsCalendarProvider.overrideWith((ref) async => _agenda()),
+      lmsUpdatesProvider.overrideWith((ref) async => {'1': const CourseUpdates(unreadDiscussions: 2, unreadFeedback: 1)}),
+      lmsCourseUpdatesProvider.overrideWith((ref, id) async => const CourseUpdates(unreadFeedback: 1)),
     ];
 
 Future<void> _shoot(WidgetTester tester, Widget app, String name,

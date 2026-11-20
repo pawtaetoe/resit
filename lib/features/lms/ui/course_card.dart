@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/lms_calendar_providers.dart';
+import 'package:resit/features/lms/ui/new_badge.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/course_screen.dart';
 
@@ -31,6 +33,7 @@ class CourseCard extends ConsumerWidget {
         showProgress ? ref.watch(lmsProgressProvider(course.orgUnitId)) : const AsyncData(null);
     final p = progress.valueOrNull;
     final seen = course.lastAccessed;
+    final updates = ref.watch(lmsUpdatesProvider.select((u) => u.valueOrNull?[course.orgUnitId]));
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -49,8 +52,15 @@ class CourseCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(course.courseCode,
-                        style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(course.courseCode,
+                              style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary)),
+                        ),
+                        NewBadge.forCourse(updates),
+                      ],
+                    ),
                     Text(course.title, style: theme.textTheme.titleSmall),
                     const SizedBox(height: 6),
                     if (p != null && p.required > 0) ...[
