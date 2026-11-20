@@ -4,6 +4,8 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/features/room_booking/room_booking_providers.dart';
 import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
+import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/meeting_providers.dart';
 import 'package:resit/core/widgets/desktop.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/features/services/ui/overview_grid.dart';
@@ -20,6 +22,9 @@ class HomeScreen extends ConsumerWidget {
   Future<void> _refresh(WidgetRef ref) async {
     ref.invalidate(nextBookingProvider);
     ref.invalidate(academicCalendarProvider);
+    // An online class's "Join": its module's announcements are read again.
+    ref.invalidate(lmsAnnouncementsProvider);
+    ref.invalidate(moduleMeetingLinkProvider);
     await Future.wait([
       // Pulling down means "now": skip the timetable's 1-hour freshness window.
       if (ref.read(authStateProvider))
