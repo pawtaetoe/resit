@@ -3,6 +3,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/features/lms/discussions_providers.dart';
+import 'package:resit/features/lms/course_extras_providers.dart';
 import 'package:resit/features/lms/lms_providers.dart';
 import 'package:resit/features/lms/meeting_providers.dart';
 import 'package:resit/features/lms/lms_calendar_providers.dart';
@@ -72,6 +73,7 @@ class AccountService {
     _ref.invalidate(lmsContentsProvider);
     _ref.invalidate(lmsDiscussionsProvider);
     _ref.invalidate(lmsTopicPostsProvider);
+    await clearCourseExtras(_ref);
     for (final p in [
       lmsAnnouncementsProvider,
       lmsAssignmentsProvider,

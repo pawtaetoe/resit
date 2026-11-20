@@ -9,6 +9,7 @@ import 'package:resit/sites/xsite/results_service.dart';
 import 'package:resit/sites/xsite/xsite_client.dart';
 import 'package:resit/sites/xsite/activity_parsers.dart';
 import 'package:resit/sites/xsite/brightspace_json.dart';
+import 'package:resit/sites/xsite/course_extras_service.dart';
 import 'package:resit/sites/xsite/course_parsers.dart';
 import 'package:resit/sites/xsite/discussions_service.dart';
 import 'package:resit/sites/xsite/xsite_calendar.dart';
@@ -68,6 +69,8 @@ class LmsService {
   /// The calendar and update counts across courses, through the same
   /// signed-in, limited requests.
   late final calendar = XsiteCalendar(_xsite);
+  /// The course overview, content files, checklists and surveys.
+  late final extras = XsiteCourseExtras(_xsite, now: _now);
 
   /// Every course on xSiTe, signing in to xSiTe first if needed. Reused for
   /// [coursesTtl]; [force] asks xSiTe again.
