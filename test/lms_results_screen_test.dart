@@ -14,6 +14,7 @@ import 'package:resit/features/lms/results_providers.dart';
 import 'package:resit/features/lms/ui/results/assignment_detail_screen.dart';
 import 'package:resit/features/lms/ui/results/quiz_detail_screen.dart';
 import 'package:resit/features/lms/ui/sections/assignments_screen.dart';
+import 'package:resit/features/lms/ui/sections/grades_screen.dart';
 import 'package:resit/sites/adfs/auth_service.dart';
 import 'package:resit/sites/xsite/xsite_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -159,6 +160,17 @@ void main() {
           .overrideWith((ref) async => throw LmsUnavailableException('/attempts/')),
     ]);
     expect(find.text("xSiTe doesn't show your attempts here. Open the quiz on xSiTe."), findsOneWidget);
+  });
+
+  testWidgets('grades show the instructor comment under each grade, hidden with grades', (tester) async {
+    await pump(tester, GradesScreen(course: course), [
+      lmsGradesProvider('213443').overrideWith((ref) async => grades),
+    ]);
+    expect(find.text('Grades hidden · tap to show'), findsOneWidget);
+    await tester.tap(find.byTooltip('Show grades'));
+    await tester.pumpAndSettle();
+    expect(find.text("Instructor's comment"), findsOneWidget);
+    expect(find.text('Well done overall'), findsOneWidget);
   });
 
   test('feedback is asked again when the course is refreshed or signed out of', () async {
