@@ -14,6 +14,7 @@ import 'package:resit/features/room_booking/domain/quota.dart';
 import 'package:resit/features/room_booking/ui/manage_booking_screen.dart';
 import 'package:resit/features/timetable/ui/timetable_screen.dart';
 import 'package:resit/features/timetable/domain/class_session.dart';
+import 'package:resit/features/lms/ui/class_meeting_button.dart';
 
 String _dayLabel(DateTime day, DateTime now) => DateUtils.isSameDay(day, now)
     ? 'Today'
@@ -78,13 +79,19 @@ class _UpNextCardState extends ConsumerState<UpNextCard> {
     final fg = theme.colorScheme.onPrimaryContainer;
     const time = ClassSession.formatMinutes;
 
-    Widget row({required IconData icon, required String title, required String subtitle, required VoidCallback onTap}) =>
+    final chevron = Icon(Icons.chevron_right, color: fg);
+    Widget row(
+            {required IconData icon,
+            required String title,
+            required String subtitle,
+            required VoidCallback onTap,
+            Widget? trailing}) =>
         ListTile(
           onTap: onTap,
           leading: Icon(icon, color: fg),
           title: Text(title, style: theme.textTheme.titleSmall?.copyWith(color: fg)),
           subtitle: Text(subtitle, style: theme.textTheme.bodyMedium?.copyWith(color: fg)),
-          trailing: Icon(Icons.chevron_right, color: fg),
+          trailing: trailing ?? chevron,
         );
 
     Widget classRow(ClassSession c, {required bool onNow}) {
@@ -99,6 +106,8 @@ class _UpNextCardState extends ConsumerState<UpNextCard> {
         subtitle: where.isEmpty ? when : '$when · $where',
         // Opens the timetable at the class's own week.
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TimetableScreen(initialDate: c.date))),
+        // An online class: "Join" when its module's announcements give the link.
+        trailing: ClassMeetingButton(session: c, fallback: chevron),
       );
     }
 

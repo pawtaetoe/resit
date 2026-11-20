@@ -3,6 +3,7 @@ import 'package:resit/core/providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/meeting_providers.dart';
 import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -74,6 +75,7 @@ class AccountService {
       lmsGradesProvider,
       lmsGroupsProvider,
       lmsCourseDueProvider,
+      moduleMeetingLinkProvider,
     ]) {
       _ref.invalidate(p);
     }

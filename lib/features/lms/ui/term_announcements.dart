@@ -7,6 +7,7 @@ import 'package:resit/core/widgets/section_label.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/sections/announcements_screen.dart';
+import 'package:resit/features/lms/ui/meeting_actions.dart';
 
 /// The newest announcements across this trimester's modules: the latest 5,
 /// and the rest under "more". Each course's announcements are read side by
@@ -88,6 +89,8 @@ class _AnnouncementTile extends StatelessWidget {
           ),
           if (a.body.isNotEmpty)
             Text(a.body, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: muted)),
+          if (a.meetings.isNotEmpty)
+            Padding(padding: const EdgeInsets.only(top: 8), child: MeetingActions(a.meetings.first)),
         ],
       ),
     );

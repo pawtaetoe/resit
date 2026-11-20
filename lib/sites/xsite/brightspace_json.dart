@@ -23,6 +23,16 @@ String richText(Object? v) {
   return '';
 }
 
+/// The HTML of a Brightspace rich-text block ({Text, Html}), or '' if it
+/// has none. Links keep their addresses only there.
+String richHtml(Object? v) {
+  if (v is! Map) return '';
+  final html = v['Html'];
+  if (html is String && html.trim().isNotEmpty) return html;
+  final text = v['Text'];
+  return text is Map ? richHtml(text) : '';
+}
+
 /// Rough plain text from HTML: tags dropped, common entities decoded,
 /// paragraphs kept apart.
 String htmlToText(String html) {
