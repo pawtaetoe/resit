@@ -1,4 +1,5 @@
 import 'package:resit/features/lms/domain/courses.dart';
+import 'package:resit/features/lms/domain/meeting_links.dart';
 
 class Announcement {
   final String id;
@@ -7,7 +8,17 @@ class Announcement {
   final DateTime? date;
   final int attachments;
 
-  Announcement({required this.id, required this.title, required this.body, this.date, this.attachments = 0});
+  /// Online-class links (Zoom, Teams, ...) in the body, in order.
+  final List<MeetingLink> meetings;
+
+  Announcement({
+    required this.id,
+    required this.title,
+    required this.body,
+    this.date,
+    this.attachments = 0,
+    this.meetings = const [],
+  });
 }
 
 class Assignment {

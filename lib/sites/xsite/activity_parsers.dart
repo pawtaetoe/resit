@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:resit/features/lms/domain/activities.dart';
+import 'package:resit/features/lms/domain/meeting_links.dart';
 import 'package:resit/sites/xsite/brightspace_json.dart';
 
 // Reading xSiTe's course activity replies (announcements, assignments,
@@ -50,6 +51,7 @@ List<Announcement> parseAnnouncements(String body) {
           body: richText(j['Body']),
           date: _date(j['StartDate']) ?? _date(j['CreatedDate']),
           attachments: (j['Attachments'] as List?)?.length ?? 0,
+          meetings: findMeetingLinks(html: richHtml(j['Body']), text: richText(j['Body'])),
         ),
   ];
   items.sort((a, b) => (b.date ?? DateTime(0)).compareTo(a.date ?? DateTime(0)));
