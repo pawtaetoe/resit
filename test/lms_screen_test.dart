@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/discussions_providers.dart';
+import 'package:resit/features/lms/domain/discussions.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/course_screen.dart';
@@ -66,6 +68,7 @@ void main() {
         lmsQuizzesProvider('213443').overrideWith((ref) async => <Quiz>[]),
         lmsGradesProvider('213443').overrideWith((ref) async => CourseGrades([])),
         lmsGroupsProvider('213443').overrideWith((ref) async => [MyGroup(category: 'Project', name: 'P2')]),
+        lmsDiscussionsProvider('213443').overrideWith((ref) async => <DiscussionForum>[]),
       ],
       child: MaterialApp(home: CourseScreen(course: course)),
     ));
@@ -73,11 +76,11 @@ void main() {
 
     expect(find.text('Lab 3 report'), findsOneWidget);
     expect(find.byType(DueTile), findsOneWidget);
-    for (final s in ['Content', 'Announcements', 'Assignments', 'Quizzes', 'Grades', 'Groups']) {
+    await tester.scrollUntilVisible(find.text('2 of 3 items done'), 100);
+    for (final s in ['Content', 'Announcements', 'Assignments', 'Quizzes', 'Grades', 'Groups', 'Discussions']) {
       await tester.scrollUntilVisible(find.text(s), 100);
       expect(find.text(s), findsOneWidget, reason: s);
     }
-    expect(find.text('2 of 3 items done'), findsOneWidget);
     expect(find.text('P2'), findsOneWidget);
   });
 

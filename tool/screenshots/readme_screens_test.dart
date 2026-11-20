@@ -22,6 +22,8 @@ import 'package:resit/features/timetable/timetable_providers.dart';
 import 'package:resit/features/calendar/calendar_providers.dart';
 import 'package:resit/features/exams/exams_providers.dart';
 import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/discussions_providers.dart';
+import 'package:resit/features/lms/domain/discussions.dart';
 import 'package:resit/core/storage/secure_storage.dart';
 import 'package:resit/core/ui/app_theme.dart';
 import 'package:resit/features/calendar/domain/academic_calendar.dart';
@@ -251,6 +253,12 @@ List<Override> _overrides() => [
       lmsGradesProvider.overrideWith((ref, id) async => CourseGrades([])),
       appLockProvider.overrideWith((ref) => _ShotLock()),
       lmsGroupsProvider.overrideWith((ref, id) async => [MyGroup(category: 'Project Groups', name: 'Team 7', memberCount: 5)]),
+      lmsDiscussionsProvider.overrideWith((ref, id) async => [
+            DiscussionForum(id: 1, name: 'Course Q&A', topics: [
+              DiscussionTopic(orgUnitId: id, forumId: 1, id: 1, name: 'Lab questions'),
+              DiscussionTopic(orgUnitId: id, forumId: 1, id: 2, name: 'Project ideas'),
+            ]),
+          ]),
     ];
 
 Future<void> _shoot(WidgetTester tester, Widget app, String name,
