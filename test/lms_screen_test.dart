@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resit/features/lms/lms_providers.dart';
+import 'package:resit/features/lms/lms_calendar_providers.dart';
+import 'package:resit/features/lms/domain/calendar.dart';
+import 'package:resit/features/lms/domain/updates.dart';
 import 'package:resit/features/lms/domain/activities.dart';
 import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/course_screen.dart';
@@ -66,6 +69,13 @@ void main() {
         lmsQuizzesProvider('213443').overrideWith((ref) async => <Quiz>[]),
         lmsGradesProvider('213443').overrideWith((ref) async => CourseGrades([])),
         lmsGroupsProvider('213443').overrideWith((ref) async => [MyGroup(category: 'Project', name: 'P2')]),
+        lmsCourseUpdatesProvider('213443')
+            .overrideWith((ref) async => const CourseUpdates(unreadFeedback: 2, unattemptedQuizzes: 1)),
+        lmsCalendarProvider.overrideWith((ref) async => LmsAgenda(DateTime.now(), soon, [
+              AgendaDay(soon, [
+                LmsEvent(orgUnitId: '213443', id: 1, title: 'Lab test', start: soon, url: course.homeUrl),
+              ]),
+            ])),
       ],
       child: MaterialApp(home: CourseScreen(course: course)),
     ));
@@ -73,12 +83,17 @@ void main() {
 
     expect(find.text('Lab 3 report'), findsOneWidget);
     expect(find.byType(DueTile), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('2 of 3 items done'), 100);
     for (final s in ['Content', 'Announcements', 'Assignments', 'Quizzes', 'Grades', 'Groups']) {
       await tester.scrollUntilVisible(find.text(s), 100);
       expect(find.text(s), findsOneWidget, reason: s);
     }
-    expect(find.text('2 of 3 items done'), findsOneWidget);
     expect(find.text('P2'), findsOneWidget);
+    // What's new, beside the sections it's about, and what's coming up.
+    for (final s in ['2 new feedback', '1 to attempt', 'Calendar']) {
+      await tester.scrollUntilVisible(find.text(s), 100);
+    }
+    expect(find.textContaining(RegExp(r'^Next: Lab test, .* · 1 event in 4 weeks$')), findsOneWidget);
   });
 
   testWidgets('latest announcements across this term: newest 5, the rest under "more"', (tester) async {
