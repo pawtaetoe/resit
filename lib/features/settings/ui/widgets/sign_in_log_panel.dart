@@ -27,7 +27,7 @@ class SignInTroubleshooting extends ConsumerWidget {
             alignment: Alignment.centerLeft,
             child: TextButton(
               onPressed: onShowLog,
-              child: const Text('Having trouble signing in?'),
+              child: const Text('Show the sign-in log'),
             ),
           );
         }
