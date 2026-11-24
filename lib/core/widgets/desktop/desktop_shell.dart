@@ -124,22 +124,30 @@ class _DesktopShellState extends State<DesktopShell> {
             Expanded(
               child: ColoredBox(
                 color: scheme.surface,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: DesktopShell.maxContentWidth),
-                    child: IndexedStack(
-                      index: widget.selected,
-                      children: [
-                        for (var i = 0; i < widget.destinations.length; i++)
-                          _visited.contains(i)
-                              ? HeroControllerScope.none(
-                                  child: Navigator(
-                                    key: _navigators[i],
-                                    onGenerateRoute: (_) => MaterialPageRoute<void>(builder: widget.destinations[i].builder),
-                                  ),
-                                )
-                              : const SizedBox.shrink(),
-                      ],
+                // Content stays clear of the system bars at the bottom and
+                // right (e.g. a tablet's taskbar). The top is left to each
+                // screen's toolbar, which pads for the status bar itself.
+                child: SafeArea(
+                  top: false,
+                  left: false,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: DesktopShell.maxContentWidth),
+                      child: IndexedStack(
+                        index: widget.selected,
+                        children: [
+                          for (var i = 0; i < widget.destinations.length; i++)
+                            _visited.contains(i)
+                                ? HeroControllerScope.none(
+                                    child: Navigator(
+                                      key: _navigators[i],
+                                      onGenerateRoute: (_) =>
+                                          MaterialPageRoute<void>(builder: widget.destinations[i].builder),
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
+                        ],
+                      ),
                     ),
                   ),
                 ),
