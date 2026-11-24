@@ -42,7 +42,7 @@ class AppTheme {
     final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(12));
     const buttonPadding = EdgeInsets.symmetric(horizontal: 20, vertical: 14);
 
-    return ThemeData(
+    final base = ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,
@@ -83,7 +83,16 @@ class AppTheme {
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
       listTileTheme: const ListTileThemeData(contentPadding: EdgeInsets.symmetric(horizontal: 16)),
     );
+    return base.copyWith(textTheme: readable(base.textTheme));
   }
+
+  /// No text under 13 px (Material's small styles are 11 and 12), and no
+  /// letter spacing on labels: dates, file types and notes stay readable.
+  static TextTheme readable(TextTheme t) => t.copyWith(
+        bodySmall: t.bodySmall?.copyWith(fontSize: 13, height: 18 / 13, letterSpacing: 0.1),
+        labelMedium: t.labelMedium?.copyWith(fontSize: 13, height: 18 / 13, letterSpacing: 0.1),
+        labelSmall: t.labelSmall?.copyWith(fontSize: 13, height: 18 / 13, letterSpacing: 0.1),
+      );
 }
 
 /// Spacing used across screens, so they don't each pick their own numbers.
