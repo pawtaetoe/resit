@@ -43,6 +43,8 @@ void main() {
     expect(viewFor('photo.jpeg'), FileView.image);
     expect(viewFor('Notes.docx'), FileView.otherApp);
     expect(viewFor('Slides.pptx'), FileView.otherApp);
+    expect(viewFor('README.md'), FileView.text);
+    expect(viewFor('notes.TXT'), FileView.text);
     expect(viewFor('no-extension'), FileView.otherApp);
   });
 
@@ -76,8 +78,10 @@ void main() {
         orgUnitId: '213443', id: 977080, title: 'W10 recording', type: 'File', url: '/content/w10.mp4', unread: true);
     final notes = ContentTopic(
         orgUnitId: '213443', id: 977081, title: 'W10 notes', type: 'File', url: '/content/notes.docx', unread: true);
+    final readme = ContentTopic(
+        orgUnitId: '213443', id: 977082, title: 'Lab setup', type: 'File', url: '/content/README.md', unread: true);
     final modules = [
-      ContentModule(id: 1, title: 'Lecture', topics: [pdf, video, notes])
+      ContentModule(id: 1, title: 'Lecture', topics: [pdf, video, notes, readme])
     ];
 
     late List<Uri> fileRequests;
@@ -93,13 +97,13 @@ void main() {
       root = Directory.systemTemp.createTempSync('resit-test-');
       service = LmsService(AuthService(SessionClient(MockClient((r) async {
         fileRequests.add(r.url);
-        final word = r.url.path.contains('/977081/');
-        return http.Response.bytes(utf8.encode(word ? 'DOCX' : '%PDF'), 200,
-            headers: {
-              'content-type': word ? 'application/octet-stream' : 'application/pdf',
-              'content-disposition': 'attachment; filename="${word ? 'Notes.docx' : 'W10.pdf'}"',
-            },
-            request: r);
+        final (name, type, body) = switch (r.url.path) {
+          final p when p.contains('/977081/') => ('Notes.docx', 'application/octet-stream', 'DOCX'),
+          final p when p.contains('/977082/') => ('README.md', 'text/markdown', '# Lab setup\nFlash the Pico W first.'),
+          _ => ('W10.pdf', 'application/pdf', '%PDF'),
+        };
+        return http.Response.bytes(utf8.encode(body), 200,
+            headers: {'content-type': type, 'content-disposition': 'attachment; filename="$name"'}, request: r);
       })), SecureStorage()));
     });
     tearDown(() => root.deleteSync(recursive: true));
@@ -178,6 +182,31 @@ void main() {
       await tapAndWait(tester, 'W10 notes', () => opener.opened.isNotEmpty);
       expect(opener.opened.single, endsWith('/213443-977081/Notes.docx'));
       expect(find.text('Opened Notes.docx (4 bytes)'), findsOneWidget);
+      expect(launched, isEmpty);
+    });
+
+    testWidgets('a text file is shown in the app', (tester) async {
+      await pump(tester, desktop: true);
+      await tester.scrollUntilVisible(find.text('Lab setup'), 100);
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Lab setup'));
+        for (var i = 0; i < 100 && !root.listSync(recursive: true).any((f) => f.path.endsWith('README.md')); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      // The page opens, then reads the file from disk (real I/O).
+      // Each step of the read waits on the disk, then on a frame.
+      await tester.pump(const Duration(milliseconds: 500));
+      for (var i = 0; i < 50 && find.byType(SelectionArea).evaluate().isEmpty; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+      expect(find.byType(FileViewScreen), findsOneWidget);
+      expect(find.text('# Lab setup\nFlash the Pico W first.'), findsOneWidget);
+      expect(opener.opened, isEmpty);
       expect(launched, isEmpty);
     });
 

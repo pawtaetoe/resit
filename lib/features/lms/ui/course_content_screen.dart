@@ -16,7 +16,7 @@ import 'package:resit/features/lms/ui/topic_tile.dart';
 /// A course's content, folder by folder, as on xSiTe, with how much is
 /// done and the course overview on top. Done items stay listed (ticked and
 /// dimmed) so they can be opened again. Links open at their own address;
-/// PDFs and images in the app, other documents in a device app, otherwise
+/// PDFs, images and text in the app, other documents in a device app, otherwise
 /// on xSiTe.
 class CourseContentScreen extends ConsumerStatefulWidget {
   final LmsCourse course;

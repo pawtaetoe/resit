@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -23,8 +24,8 @@ final pdfViewBuilderProvider = Provider<Widget Function(String path)>(
       ),
 );
 
-/// A downloaded course file shown in the app: a PDF in a viewer, or an
-/// image that can be zoomed. Its bar offers the file to another app, or
+/// A downloaded course file shown in the app: a PDF in a viewer, an image
+/// that can be zoomed, or plain text (notes, Markdown, logs). Its bar offers the file to another app, or
 /// the item on xSiTe.
 class FileViewScreen extends ConsumerWidget {
   final SavedFile file;
@@ -41,25 +42,26 @@ class FileViewScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isPdf = viewFor(file.name) == FileView.pdf;
     return AppScaffold(
       appBar: thumbAppBar(file.name, subtitle: fileSizeLabel(file.size)),
-      body: isPdf
-          ? ref.watch(pdfViewBuilderProvider)(file.path)
-          : InteractiveViewer(
-              maxScale: 6,
-              child: Center(
-                child: Image.file(
-                  File(file.path),
-                  semanticLabel: file.name,
-                  errorBuilder: (context, error, stack) => const MessageView(
-                    icon: Icons.broken_image_outlined,
-                    title: "Couldn't show this image",
-                    message: 'Open it in another app or on xSiTe.',
-                  ),
+      body: switch (viewFor(file.name)) {
+        FileView.pdf => ref.watch(pdfViewBuilderProvider)(file.path),
+        FileView.text => _TextView(file: file),
+        _ => InteractiveViewer(
+            maxScale: 6,
+            child: Center(
+              child: Image.file(
+                File(file.path),
+                semanticLabel: file.name,
+                errorBuilder: (context, error, stack) => const MessageView(
+                  icon: Icons.broken_image_outlined,
+                  title: "Couldn't show this image",
+                  message: 'Open it in another app or on xSiTe.',
                 ),
               ),
             ),
+          ),
+      },
       bottomNavigationBar: ThumbBar(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -80,6 +82,59 @@ class FileViewScreen extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Text files over this are left to another app: drawing megabytes of text
+/// at once makes scrolling stutter.
+const maxTextViewBytes = 1024 * 1024;
+
+/// A text file's words, selectable, at reading size and width. Bytes that
+/// aren't UTF-8 show as a replacement mark rather than failing the file.
+class _TextView extends StatefulWidget {
+  final SavedFile file;
+  const _TextView({required this.file});
+
+  @override
+  State<_TextView> createState() => _TextViewState();
+}
+
+class _TextViewState extends State<_TextView> {
+  late final Future<String> _text = _read();
+
+  Future<String> _read() async {
+    if (widget.file.size > maxTextViewBytes) throw const FileSystemException('too big');
+    return utf8.decode(await File(widget.file.path).readAsBytes(), allowMalformed: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String>(
+      future: _text,
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return MessageView(
+            icon: Icons.article_outlined,
+            title: widget.file.size > maxTextViewBytes ? 'Too long to show here' : "Couldn't read this file",
+            message: 'Open it in another app or on xSiTe.',
+          );
+        }
+        final text = snap.data;
+        if (text == null) return const Center(child: CircularProgressIndicator());
+        final style = Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.6);
+        return SelectionArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 680),
+                child: SizedBox(width: double.infinity, child: Text(text, style: style)),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

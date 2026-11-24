@@ -12,13 +12,13 @@ import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/file_view_screens.dart';
 import 'package:resit/features/lms/ui/open_in_browser.dart';
 
-/// Whether course files are downloaded and opened here (PDFs and images in
-/// the app, other documents in another app on the device). Everywhere but the
+/// Whether course files are downloaded and opened here (PDFs, images and
+/// text in the app, other documents in another app on the device). Everywhere but the
 /// web, where files open on xSiTe.
 final opensFilesHereProvider = Provider<bool>((ref) => !kIsWeb);
 
 /// Opens a content topic: a document is downloaded and shown in the app (PDF,
-/// image) or handed to another app on the device (Word, Slides, ...);
+/// image, text) or handed to another app on the device (Word, Slides, ...);
 /// anything else (videos, web pages) and a document whose download fails
 /// opens in the browser.
 Future<void> openTopic(BuildContext context, WidgetRef ref, ContentTopic topic) {
