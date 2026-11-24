@@ -82,15 +82,15 @@ class TotpSection extends ConsumerWidget {
               Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
+                    child: FilledButton.tonal(
                       onPressed: () => showTotpSetupSheet(context),
                       child: const Text('Replace'),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
+                    child: FilledButton.tonal(
+                      style: dangerTonal(scheme),
                       onPressed: () => _turnOff(context, ref),
                       child: const Text('Turn off'),
                     ),

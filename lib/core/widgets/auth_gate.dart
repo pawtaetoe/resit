@@ -78,7 +78,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
           child: MfaCard(challenge: session.challenge!),
         ),
       );
-      action = OutlinedButton.icon(
+      action = FilledButton.tonalIcon(
         onPressed: () => ref.read(sessionControllerProvider.notifier).cancelSignIn(),
         icon: const Icon(Icons.close),
         label: const Text('Cancel sign-in'),

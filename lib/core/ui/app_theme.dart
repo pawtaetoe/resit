@@ -95,6 +95,11 @@ class AppTheme {
       );
 }
 
+/// The one secondary button look (tonal) in red, for a secondary action
+/// that removes or turns something off.
+ButtonStyle dangerTonal(ColorScheme scheme) =>
+    FilledButton.styleFrom(backgroundColor: scheme.errorContainer, foregroundColor: scheme.onErrorContainer);
+
 /// Spacing used across screens, so they don't each pick their own numbers.
 abstract final class Space {
   /// Between sections of a screen.
