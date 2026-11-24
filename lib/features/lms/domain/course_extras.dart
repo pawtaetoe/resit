@@ -43,15 +43,30 @@ String fileTypeLabel(ContentTopic topic) => switch (topic.extension) {
       final ext => ext.length <= 5 ? '${ext.toUpperCase()} file' : 'File',
     };
 
-/// Document types the app downloads and opens in the device's own viewer
-/// (where it can); anything else (videos, web pages) opens on xSiTe.
+/// Document types the app downloads and opens (in the app or another app
+/// on the device); anything else (videos, web pages) opens on xSiTe.
 const _documentTypes = {
   'pdf', 'doc', 'docx', 'odt', 'rtf', 'ppt', 'pptx', 'odp', 'xls', 'xlsx', 'ods', 'csv', 'txt', 'zip', //
   'png', 'jpg', 'jpeg', 'gif',
 };
 
-/// A file topic the app can download and hand to the device's viewer.
+/// A file topic the app can download and open.
 bool isDocument(ContentTopic topic) => topic.type == 'File' && _documentTypes.contains(topic.extension);
+
+/// How a downloaded file is shown: PDFs and images in the app, anything
+/// else handed to another app on the device.
+enum FileView { pdf, image, otherApp }
+
+/// The [FileView] for a file, from its name's extension.
+FileView viewFor(String fileName) {
+  final dot = fileName.lastIndexOf('.');
+  final ext = dot < 0 ? '' : fileName.substring(dot + 1).toLowerCase();
+  return switch (ext) {
+    'pdf' => FileView.pdf,
+    'png' || 'jpg' || 'jpeg' || 'gif' || 'webp' => FileView.image,
+    _ => FileView.otherApp,
+  };
+}
 
 /// "2.3 MB", "640 KB", "12 bytes".
 String fileSizeLabel(int bytes) {
