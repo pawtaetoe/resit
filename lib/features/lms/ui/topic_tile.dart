@@ -5,8 +5,9 @@ import 'package:resit/features/lms/domain/courses.dart';
 import 'package:resit/features/lms/ui/open_topic.dart';
 
 /// One item in a course's content: its kind of file, description and
-/// whether it's done. A document opens in the device's viewer where it can
-/// (with a spinner while it downloads); anything else in the browser.
+/// whether it's done. A PDF, image or text file opens in the app, another
+/// document in an app on the device (with a spinner while it downloads);
+/// anything else in the browser.
 class TopicTile extends ConsumerStatefulWidget {
   final ContentTopic topic;
   final bool done;
@@ -27,6 +28,7 @@ class _TopicTileState extends ConsumerState<TopicTile> {
         'doc' || 'docx' => Icons.description_outlined,
         'ppt' || 'pptx' => Icons.slideshow_outlined,
         'html' || 'htm' => Icons.web_outlined,
+        'txt' || 'md' || 'log' => Icons.article_outlined,
         _ when topic.type == 'ContentService' => Icons.play_circle_outline,
         _ when topic.isLink => Icons.link,
         _ => Icons.insert_drive_file_outlined,
@@ -65,7 +67,14 @@ class _TopicTileState extends ConsumerState<TopicTile> {
           ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
           : widget.done
               ? Icon(Icons.check_circle, color: theme.colorScheme.primary, semanticLabel: 'Done')
-              : Icon(inApp ? Icons.download_outlined : Icons.open_in_new, size: 18, color: muted),
+              : Icon(
+                  !inApp
+                      ? Icons.open_in_new
+                      : viewFor('.${topic.extension}') == FileView.otherApp
+                          ? Icons.download_outlined
+                          : Icons.chevron_right,
+                  size: 18,
+                  color: muted),
       onTap: _open,
     );
   }

@@ -8,9 +8,9 @@ import 'package:resit/sites/xsite/course_extras_service.dart';
 typedef SavedFile = ({String path, String name, int size});
 
 /// Course files downloaded from xSiTe into a private temporary folder, so
-/// the device's own viewer can open them. The folder is made for this run of
-/// the app (readable by this user only), folders from earlier runs are
-/// removed, and [clear] (on sign-out) deletes everything.
+/// the app (or another app on the device) can open them. The folder is made
+/// for this run of the app (readable by this user only), folders from
+/// earlier runs are removed, and [clear] (on sign-out) deletes everything.
 class TopicFiles {
   static const _prefix = 'resit-xsite-';
 
