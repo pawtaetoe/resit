@@ -30,7 +30,7 @@ class GraduationRing extends StatelessWidget {
     final done = total <= 0 ? 1.0 : (today.difference(start).inDays / total).clamp(0.0, 1.0);
     final ringSize = MediaQuery.textScalerOf(context).scale(96).clamp(96.0, 140.0);
     final caption = days <= 0
-        ? 'Finals are over!'
+        ? 'Finals are over'
         : '${(done * 100).round()}% of the way · last final ${DateFormat('EEE d MMM yyyy').format(date)}'
             '${estimated ? ' (estimated)' : ''}';
 

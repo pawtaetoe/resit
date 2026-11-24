@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:resit/core/ui/app_theme.dart';
 
 /// A choice in [showChoiceSheet].
 class SheetChoice<T> {
@@ -72,8 +73,8 @@ Widget _choiceButton<T>(BuildContext context, SheetChoice<T> c) {
         ? FilledButton(style: style, onPressed: pick, child: label)
         : FilledButton.icon(style: style, onPressed: pick, icon: icon, label: label);
   }
-  final style = c.danger ? OutlinedButton.styleFrom(foregroundColor: scheme.error) : null;
+  final style = c.danger ? dangerTonal(scheme) : null;
   return icon == null
-      ? OutlinedButton(style: style, onPressed: pick, child: label)
-      : OutlinedButton.icon(style: style, onPressed: pick, icon: icon, label: label);
+      ? FilledButton.tonal(style: style, onPressed: pick, child: label)
+      : FilledButton.tonalIcon(style: style, onPressed: pick, icon: icon, label: label);
 }

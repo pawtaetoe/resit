@@ -140,7 +140,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   // A sign-in can wait up to 2 minutes for approval: let it be stopped.
                   if (_busy) ...[
                     const SizedBox(width: 8),
-                    OutlinedButton(
+                    FilledButton.tonal(
                       onPressed: () => ref.read(sessionControllerProvider.notifier).cancelSignIn(),
                       child: const Text('Cancel'),
                     ),
@@ -174,7 +174,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const SizedBox(height: Space.section),
                 ],
                 if (signedIn && !_editing) ...[
-                  OutlinedButton.icon(
+                  FilledButton.tonalIcon(
                     onPressed: _busy ? null : _signOut,
                     icon: const Icon(Icons.logout),
                     label: const Text('Sign out'),

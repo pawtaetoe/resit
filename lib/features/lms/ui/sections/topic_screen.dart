@@ -54,7 +54,7 @@ class _TopicScreenState extends State<TopicScreen> {
           for (final t in posts.threads.take(_shown)) ThreadCard(thread: t),
           if (rest > 0)
             Center(
-              child: OutlinedButton.icon(
+              child: FilledButton.tonalIcon(
                 onPressed: () => setState(() => _shown += TopicScreen.pageSize),
                 icon: const Icon(Icons.expand_more),
                 label: Text('Show more threads ($rest left)'),

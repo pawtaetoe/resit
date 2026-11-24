@@ -39,7 +39,8 @@ class ClassBlock extends StatelessWidget {
               TextSpan(text: '${s.component}\n${s.location}'),
             ]),
             overflow: TextOverflow.clip,
-            style: theme.textTheme.labelSmall?.copyWith(color: Colors.white, height: 1.2, letterSpacing: 0),
+            // The week grid's blocks are too narrow for the 13 px floor.
+            style: theme.textTheme.labelSmall?.copyWith(color: Colors.white, fontSize: 11, height: 1.2, letterSpacing: 0),
           ),
         ),
       ),

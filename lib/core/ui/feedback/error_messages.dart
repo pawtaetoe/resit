@@ -49,7 +49,7 @@ String friendlyError(Object error) {
   }
   // MFA messages written for students (e.g. "Set up automatic codes…") and
   // other plain sentences pass through.
-  return text.isEmpty ? 'Something went wrong. Try again.' : text;
+  return text.isEmpty ? "Couldn't finish that. Try again." : text;
 }
 
 String _rawText(Object error) => error is MfaException
